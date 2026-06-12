@@ -1,0 +1,25 @@
+node_modules
+dist
+out
+.DS_Store
+.eslintcache
+*.log*
+
+# Electron user data
+*.db
+*.db-shm
+*.db-wal
+.cache
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+
+# Claude Code session
+.claude/
