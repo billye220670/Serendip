@@ -2,8 +2,9 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { MasonryPhotoAlbum } from 'react-photo-album'
 import 'react-photo-album/masonry.css'
 import { useInView } from 'react-intersection-observer'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Heart, HeartOff, EyeOff, FolderOpen } from 'lucide-react'
 import { MediaCard } from '../components/MediaCard'
+import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { useUIStore } from '../stores/ui'
 import { useLibraryStore } from '../stores/library'
 import type { MediaItem } from '../../../main/recommender'
@@ -19,12 +20,20 @@ interface MediaPhoto {
   item: MediaItem
 }
 
+interface MenuState {
+  x: number
+  y: number
+  item: MediaItem
+}
+
 export function ExploreView(): React.JSX.Element {
   const exploreMode = useUIStore((s) => s.exploreMode)
   const rootPath = useLibraryStore((s) => s.rootPath)
+  const loadStats = useLibraryStore((s) => s.loadStats)
 
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [menu, setMenu] = useState<MenuState | null>(null)
   const seenIdsRef = useRef<Set<number>>(new Set())
   const loadingRef = useRef(false)
   const hasMoreRef = useRef(true)
@@ -75,9 +84,76 @@ export function ExploreView(): React.JSX.Element {
     }
   }, [inView, items.length, loadMore])
 
-  const handleLikeToggle = useCallback(async (id: number, liked: boolean) => {
-    await window.api.setLiked(id, liked)
+  /** 从当前列表移除一项（不感兴趣 / 失效），并补刀加载 */
+  const removeItem = useCallback(
+    (id: number) => {
+      setItems((prev) => {
+        const next = prev.filter((it) => it.id !== id)
+        // 列表过短时主动拉一批，保证瀑布流不空
+        if (next.length < BATCH_SIZE / 2 && hasMoreRef.current) {
+          void loadMore(false)
+        }
+        return next
+      })
+    },
+    [loadMore]
+  )
+
+  const handleLikeToggle = useCallback(
+    async (id: number, liked: boolean) => {
+      // 先更新 UI 中那一项（非阻塞），再持久化
+      setItems((prev) =>
+        prev.map((it) => (it.id === id ? { ...it, liked: liked ? 1 : 0 } : it))
+      )
+      try {
+        await window.api.setLiked(id, liked)
+        void loadStats()
+      } catch (err) {
+        console.error('setLiked failed:', err)
+      }
+    },
+    [loadStats]
+  )
+
+  const handleDislike = useCallback(
+    async (item: MediaItem) => {
+      removeItem(item.id)
+      try {
+        await window.api.setDisliked(item.id, true)
+      } catch (err) {
+        console.error('setDisliked failed:', err)
+      }
+    },
+    [removeItem]
+  )
+
+  const handleReveal = useCallback(async (item: MediaItem) => {
+    try {
+      await window.api.revealInFolder(item.id)
+    } catch (err) {
+      console.error('revealInFolder failed:', err)
+    }
   }, [])
+
+  /** 缩略图加载失败 → 标记失效并从列表移除 */
+  const handleThumbError = useCallback(
+    async (item: MediaItem) => {
+      removeItem(item.id)
+      try {
+        await window.api.markUnavailable(item.id, 'thumb-load-failed')
+      } catch (err) {
+        console.error('markUnavailable failed:', err)
+      }
+    },
+    [removeItem]
+  )
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, item: MediaItem) => {
+    e.preventDefault()
+    setMenu({ x: e.clientX, y: e.clientY, item })
+  }, [])
+
+  const closeMenu = useCallback(() => setMenu(null), [])
 
   // 把 MediaItem 转换成 react-photo-album 接受的 Photo 形态
   const photos: MediaPhoto[] = items.map((item) => ({
@@ -104,6 +180,30 @@ export function ExploreView(): React.JSX.Element {
     )
   }
 
+  const menuItems: ContextMenuItem[] = menu
+    ? [
+        {
+          key: 'like',
+          label: menu.item.liked ? '取消喜欢' : '喜欢',
+          icon: menu.item.liked ? HeartOff : Heart,
+          onClick: () => void handleLikeToggle(menu.item.id, !menu.item.liked)
+        },
+        {
+          key: 'reveal',
+          label: '在文件管理器中显示',
+          icon: FolderOpen,
+          onClick: () => void handleReveal(menu.item)
+        },
+        {
+          key: 'dislike',
+          label: '不感兴趣',
+          icon: EyeOff,
+          danger: true,
+          onClick: () => void handleDislike(menu.item)
+        }
+      ]
+    : []
+
   return (
     <div className="p-4">
       <MasonryPhotoAlbum
@@ -122,6 +222,8 @@ export function ExploreView(): React.JSX.Element {
               <MediaCard
                 item={(photo as MediaPhoto).item}
                 onLikeToggle={handleLikeToggle}
+                onContextMenu={handleContextMenu}
+                onThumbError={handleThumbError}
               />
             </div>
           )
@@ -141,6 +243,10 @@ export function ExploreView(): React.JSX.Element {
         <div className="py-6 text-center text-xs text-muted-foreground">
           已抽样完所有可用内容
         </div>
+      )}
+
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
       )}
     </div>
   )

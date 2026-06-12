@@ -56,15 +56,16 @@ export function recommend(options: RecommendOptions): MediaItem[] {
   if (!rootRow) return []
   const rootPrefix = escapeLike(rootRow.value)
 
-  // 1) 取出所有文件夹及其权重（排除完全只有 disliked 的文件夹）
+  // 1) 取出所有文件夹及其权重（排除完全只有 disliked / unavailable 的文件夹）
   const folders = db.prepare(`
     SELECT
       folder_path as path,
       COUNT(*) as file_count,
-      SUM(CASE WHEN disliked = 0 THEN 1 ELSE 0 END) as available_count,
+      SUM(CASE WHEN disliked = 0 AND unavailable = 0 THEN 1 ELSE 0 END) as available_count,
       MAX(IFNULL(last_shown_at, 0)) as last_shown_at
     FROM media_files
     WHERE disliked = 0
+      AND unavailable = 0
       AND path LIKE ? ESCAPE '\\'
     GROUP BY folder_path
     HAVING available_count > 0
@@ -168,13 +169,13 @@ function pickFileInFolder(
   seenInBatch: Set<number>
 ): MediaItem | null {
   const params = getModeParams(mode)
-  // 读出文件夹下所有可用文件（不含 disliked）
+  // 读出文件夹下所有可用文件（不含 disliked / unavailable）
   const files = db.prepare(`
     SELECT id, path, folder_path, type, width, height, duration_ms, liked, disliked,
            IFNULL(last_shown_at, 0) as last_shown_at,
            shown_count
     FROM media_files
-    WHERE folder_path = ? AND disliked = 0
+    WHERE folder_path = ? AND disliked = 0 AND unavailable = 0
   `).all(folderPath) as Array<MediaItem & { last_shown_at: number; shown_count: number }>
 
   const available = files.filter(

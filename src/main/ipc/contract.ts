@@ -17,6 +17,8 @@ export interface SerendipAPI {
   getRecommendations(count: number, mode: ExploreMode): Promise<MediaItem[]>
   setLiked(fileId: number, liked: boolean): Promise<void>
   setDisliked(fileId: number, disliked: boolean): Promise<void>
+  markUnavailable(fileId: number, reason: string): Promise<void>
+  revealInFolder(fileId: number): Promise<void>
 
   // ===== 进度订阅 =====
   onScanProgress(callback: (progress: ScanProgress) => void): () => void
@@ -38,5 +40,7 @@ export const IPC = {
   SCAN_PROGRESS: 'serendip:scanProgress',
   GET_RECOMMENDATIONS: 'serendip:getRecommendations',
   SET_LIKED: 'serendip:setLiked',
-  SET_DISLIKED: 'serendip:setDisliked'
+  SET_DISLIKED: 'serendip:setDisliked',
+  MARK_UNAVAILABLE: 'serendip:markUnavailable',
+  REVEAL_IN_FOLDER: 'serendip:revealInFolder'
 } as const

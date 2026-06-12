@@ -7,6 +7,8 @@ interface MediaCardProps {
   item: MediaItem
   onLikeToggle: (id: number, liked: boolean) => void
   onContextMenu?: (e: React.MouseEvent, item: MediaItem) => void
+  /** 缩略图加载失败时的回调（用于上报到主进程并从列表移除） */
+  onThumbError?: (item: MediaItem) => void
 }
 
 const VIDEO_PLAY_LIMIT = 3 // 最多 3 个视频同时播放
@@ -75,16 +77,19 @@ function releaseVideo(id: number, el: HTMLVideoElement): void {
 export function MediaCard({
   item,
   onLikeToggle,
-  onContextMenu
+  onContextMenu,
+  onThumbError
 }: MediaCardProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
   const [shouldPlayVideo, setShouldPlayVideo] = useState(false)
   const [videoFailed, setVideoFailed] = useState(false)
-  const [liked, setLiked] = useState(!!item.liked)
   const [imgError, setImgError] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const enterTimerRef = useRef<number | null>(null)
   const leaveTimerRef = useRef<number | null>(null)
+
+  // liked 直接以 props 为准（父级 setItems 后会自动同步）
+  const liked = !!item.liked
 
   // 卸载时清理所有定时器
   useEffect(() => {
@@ -198,10 +203,13 @@ export function MediaCard({
 
   const handleLikeClick = (e: React.MouseEvent): void => {
     e.stopPropagation()
-    const newLiked = !liked
-    setLiked(newLiked)
-    onLikeToggle(item.id, newLiked)
+    onLikeToggle(item.id, !liked)
   }
+
+  const handleImgError = useCallback((): void => {
+    setImgError(true)
+    onThumbError?.(item)
+  }, [item, onThumbError])
 
   const thumbUrl = `serendip://thumb/${item.id}`
 
@@ -219,7 +227,7 @@ export function MediaCard({
           alt=""
           loading="lazy"
           className="w-full h-full object-cover"
-          onError={() => setImgError(true)}
+          onError={handleImgError}
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">

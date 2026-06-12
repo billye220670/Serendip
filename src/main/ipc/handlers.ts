@@ -1,4 +1,5 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog, shell, BrowserWindow } from 'electron'
+import { existsSync } from 'fs'
 import { IPC } from './contract'
 import { getDatabase } from '../db'
 import { scanRoot, type ScanProgress } from '../scanner'
@@ -60,6 +61,31 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.SET_DISLIKED, (_event, fileId: number, disliked: boolean) => {
     const db = getDatabase()
     db.prepare('UPDATE media_files SET disliked = ? WHERE id = ?').run(disliked ? 1 : 0, fileId)
+  })
+
+  // 标记文件失效（缩略图生成失败 / 文件已删除 / 损坏）
+  ipcMain.handle(IPC.MARK_UNAVAILABLE, (_event, fileId: number, reason: string) => {
+    const db = getDatabase()
+    db.prepare(
+      'UPDATE media_files SET unavailable = 1, unavailable_reason = ? WHERE id = ?'
+    ).run(reason, fileId)
+  })
+
+  // 在文件管理器中显示
+  ipcMain.handle(IPC.REVEAL_IN_FOLDER, (_event, fileId: number) => {
+    const db = getDatabase()
+    const row = db.prepare('SELECT path FROM media_files WHERE id = ?').get(fileId) as
+      | { path: string }
+      | undefined
+    if (!row) return
+    if (!existsSync(row.path)) {
+      // 文件已不存在，顺便标记失效
+      db.prepare(
+        'UPDATE media_files SET unavailable = 1, unavailable_reason = ? WHERE id = ?'
+      ).run('missing', fileId)
+      return
+    }
+    shell.showItemInFolder(row.path)
   })
 }
 

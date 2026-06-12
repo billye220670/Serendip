@@ -116,6 +116,15 @@ function runMigrations(db: Database.Database): void {
           value TEXT NOT NULL
         );
       `
+    },
+    // 迁移 2: 文件失效标记（已删除 / 缩略图生成失败 / 文件损坏）
+    {
+      version: 2,
+      up: `
+        ALTER TABLE media_files ADD COLUMN unavailable INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE media_files ADD COLUMN unavailable_reason TEXT;
+        CREATE INDEX idx_files_unavailable ON media_files(unavailable) WHERE unavailable = 1;
+      `
     }
   ]
 

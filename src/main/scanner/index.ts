@@ -58,16 +58,17 @@ export async function scanRoot(
   // 2) 加载数据库内当前根目录下的记录
   const existing = db
     .prepare(
-      `SELECT id, path, mtime, size FROM media_files WHERE path LIKE ? ESCAPE '\\'`
+      `SELECT id, path, mtime, size, unavailable FROM media_files WHERE path LIKE ? ESCAPE '\\'`
     )
     .all(escapeLike(rootPath) + '%') as Array<{
     id: number
     path: string
     mtime: number
     size: number
+    unavailable: number
   }>
 
-  const dbMap = new Map<string, { id: number; mtime: number; size: number }>()
+  const dbMap = new Map<string, { id: number; mtime: number; size: number; unavailable: number }>()
   for (const r of existing) dbMap.set(r.path, r)
 
   // 3) 计算差异
@@ -110,7 +111,13 @@ export async function scanRoot(
   `)
 
   const updateStmt = db.prepare(`
-    UPDATE media_files SET mtime = ?, size = ? WHERE id = ?
+    UPDATE media_files SET mtime = ?, size = ?, unavailable = 0, unavailable_reason = NULL WHERE id = ?
+  `)
+
+  // 解封：扫描时若存在的文件之前被标记 unavailable，但 mtime/size 没变，也要解封
+  // （比如：临时锁占用导致缩略图失败被标记，下次扫到就恢复）
+  const reviveStmt = db.prepare(`
+    UPDATE media_files SET unavailable = 0, unavailable_reason = NULL WHERE id = ?
   `)
 
   // 用 transaction 包裹批量写入大幅提升性能
@@ -164,6 +171,7 @@ export async function scanRoot(
   for (let i = 0; i < toUpdate.length; i += BATCH_SIZE) {
     const batch = toUpdate.slice(i, i + BATCH_SIZE)
     const updates: Array<{ id: number; mtime: number; size: number }> = []
+    const revives: number[] = []
 
     await Promise.all(
       batch.map(async (e) => {
@@ -173,6 +181,9 @@ export async function scanRoot(
           const dbRow = dbMap.get(e.path)!
           if (dbRow.mtime !== newMtime || dbRow.size !== s.size) {
             updates.push({ id: dbRow.id, mtime: newMtime, size: s.size })
+          } else if (dbRow.unavailable === 1) {
+            // mtime/size 都没变但被标记了失效 → 解封
+            revives.push(dbRow.id)
           }
         } catch {
           // 忽略错误
@@ -180,13 +191,18 @@ export async function scanRoot(
       })
     )
 
-    if (updates.length > 0) {
-      const updateBatchTx = db.transaction((items: typeof updates) => {
-        for (const u of items) {
-          updateStmt.run(u.mtime, u.size, u.id)
+    if (updates.length > 0 || revives.length > 0) {
+      const updateBatchTx = db.transaction(
+        (items: typeof updates, revivedIds: number[]) => {
+          for (const u of items) {
+            updateStmt.run(u.mtime, u.size, u.id)
+          }
+          for (const id of revivedIds) {
+            reviveStmt.run(id)
+          }
         }
-      })
-      updateBatchTx(updates)
+      )
+      updateBatchTx(updates, revives)
       updated += updates.length
     }
     scanned += batch.length

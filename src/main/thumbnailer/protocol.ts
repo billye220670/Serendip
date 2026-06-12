@@ -35,6 +35,8 @@ export function registerThumbProtocol(): void {
         })
       } catch (err) {
         console.error(`Failed to serve thumb for file ${fileId}:`, err)
+        // 标记失效，避免下次还被推荐
+        markUnavailable(fileId, err instanceof Error ? err.message : String(err))
         return new Response('Thumbnail not found', { status: 404 })
       }
     }
@@ -143,6 +145,21 @@ function lookupFilePath(fileId: number): string | null {
     | { path: string }
     | undefined
   return row?.path ?? null
+}
+
+/**
+ * 把文件标记为失效（缩略图生成失败 / 文件丢失 / 解码错误）。
+ * 仅在 protocol 层兜底使用；正常流程通过 IPC 由 UI 主动调用。
+ */
+function markUnavailable(fileId: number, reason: string): void {
+  try {
+    const db = getDatabase()
+    db.prepare(
+      'UPDATE media_files SET unavailable = 1, unavailable_reason = ? WHERE id = ?'
+    ).run(reason.slice(0, 200), fileId)
+  } catch (err) {
+    console.error('Failed to mark unavailable:', err)
+  }
 }
 
 /**

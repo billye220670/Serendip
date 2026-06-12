@@ -17,6 +17,9 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.SET_LIKED, fileId, liked),
   setDisliked: (fileId: number, disliked: boolean) =>
     ipcRenderer.invoke(IPC.SET_DISLIKED, fileId, disliked),
+  markUnavailable: (fileId: number, reason: string) =>
+    ipcRenderer.invoke(IPC.MARK_UNAVAILABLE, fileId, reason),
+  revealInFolder: (fileId: number) => ipcRenderer.invoke(IPC.REVEAL_IN_FOLDER, fileId),
 
   onScanProgress: (callback: (progress: ScanProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => {
