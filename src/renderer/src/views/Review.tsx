@@ -282,9 +282,9 @@ export function ReviewView(): React.JSX.Element {
               draggable={false}
               style={{
                 display: 'block',
-                width: '360px',
+                width: '720px',
                 height: 'auto',
-                maxWidth: 'calc(100vw - 256px)',
+                maxWidth: 'calc(100vw - 320px)',
                 pointerEvents: 'none',
                 userSelect: 'none'
               }}
@@ -357,9 +357,9 @@ export function ReviewView(): React.JSX.Element {
                 playsInline
                 style={{
                   display: 'block',
-                  height: 'calc(100vh - 80px)',
+                  height: 'calc(100vh - 160px)',
                   width: 'auto',
-                  maxWidth: 'calc(100vw - 256px)',
+                  maxWidth: 'calc(100vw - 320px)',
                   pointerEvents: 'none'
                 }}
               />
@@ -370,9 +370,9 @@ export function ReviewView(): React.JSX.Element {
                 draggable={false}
                 style={{
                   display: 'block',
-                  height: 'calc(100vh - 80px)',
+                  height: 'calc(100vh - 160px)',
                   width: 'auto',
-                  maxWidth: 'calc(100vw - 256px)',
+                  maxWidth: 'calc(100vw - 320px)',
                   pointerEvents: 'none',
                   userSelect: 'none'
                 }}
