@@ -10,7 +10,7 @@ type UndoAction =
   | { item: MediaItem; action: 'dislike' }
   | { item: MediaItem; action: 'skip' }
 
-const THRESHOLD_X = 220
+const THRESHOLD_X = 300
 const BUFFER_FILL = 10
 const LOW_WATER = 4
 
@@ -288,8 +288,8 @@ export function ReviewView(): React.JSX.Element {
   const cardDx = isFly ? flyState.dx : dx
   const cardDy = isFly ? flyState.dy : 0
   const rotate = isFly ? (flyState.dx > 0 ? 22 : -22) : dx / 18
-  const likeAlpha = Math.min(1, Math.max(0, (dx - 50) / 170))
-  const nopeAlpha = Math.min(1, Math.max(0, (-dx - 50) / 170))
+  const likeAlpha = Math.min(1, Math.max(0, (dx - 60) / 240))
+  const nopeAlpha = Math.min(1, Math.max(0, (-dx - 60) / 240))
   // 是否越过触发阈值（用于标题弹大）
   const isLikePast = dx >= THRESHOLD_X
   const isNopePast = dx <= -THRESHOLD_X
