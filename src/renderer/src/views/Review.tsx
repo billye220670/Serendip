@@ -288,8 +288,11 @@ export function ReviewView(): React.JSX.Element {
   const cardDx = isFly ? flyState.dx : dx
   const cardDy = isFly ? flyState.dy : 0
   const rotate = isFly ? (flyState.dx > 0 ? 22 : -22) : dx / 18
-  const likeAlpha = Math.min(1, Math.max(0, (dx - 100) / 120))
-  const nopeAlpha = Math.min(1, Math.max(0, (-dx - 100) / 120))
+  const likeAlpha = Math.min(1, Math.max(0, (dx - 50) / 170))
+  const nopeAlpha = Math.min(1, Math.max(0, (-dx - 50) / 170))
+  // 是否越过触发阈值（用于标题弹大）
+  const isLikePast = dx >= THRESHOLD_X
+  const isNopePast = dx <= -THRESHOLD_X
 
   // 当前卡片的自然比例（无数据时退到固定卡片比例，入场无比例动画）
   const naturalRatio =
@@ -407,10 +410,11 @@ export function ReviewView(): React.JSX.Element {
           transform:
             punchLabel === 'like'
               ? 'translateY(-50%)'
-              : `translateY(-50%) scale(${1 + likeAlpha * 0.35})`,
-          opacity: punchLabel === 'like' ? undefined : likeAlpha,
+              : `translateY(-50%) scale(${isLikePast ? 1 : 0.45})`,
+          opacity: punchLabel === 'like' ? undefined : isLikePast ? 1 : likeAlpha,
           fontSize: '5rem',
-          textShadow: '0 2px 24px rgba(0,0,0,0.75)'
+          textShadow: '0 2px 24px rgba(0,0,0,0.75)',
+          transition: punchLabel === 'like' ? 'none' : 'transform 0.15s ease-out, opacity 0.12s ease-out'
         }}
       >
         喜欢
@@ -428,11 +432,12 @@ export function ReviewView(): React.JSX.Element {
           transform:
             punchLabel === 'dislike'
               ? 'translateY(-50%)'
-              : `translateY(-50%) scale(${1 + nopeAlpha * 0.35})`,
-          opacity: punchLabel === 'dislike' ? undefined : nopeAlpha,
+              : `translateY(-50%) scale(${isNopePast ? 1 : 0.45})`,
+          opacity: punchLabel === 'dislike' ? undefined : isNopePast ? 1 : nopeAlpha,
           fontSize: '3rem',
           color: 'rgba(220,220,220,0.92)',
-          textShadow: '0 2px 24px rgba(0,0,0,0.75)'
+          textShadow: '0 2px 24px rgba(0,0,0,0.75)',
+          transition: punchLabel === 'dislike' ? 'none' : 'transform 0.15s ease-out, opacity 0.12s ease-out'
         }}
       >
         不感兴趣
