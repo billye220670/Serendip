@@ -21,6 +21,7 @@ import { useCategoriesStore } from './stores/categories'
 import { useSelectionStore } from './stores/selection'
 import { ExploreView } from './views/Explore'
 import { CategoryView } from './views/CategoryView'
+import { ReviewView } from './views/Review'
 import { CategoryList } from './components/CategoryList'
 import { PromptDialog } from './components/PromptDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
@@ -338,7 +339,12 @@ function App(): React.JSX.Element {
               active={view.kind === 'explore'}
               onClick={() => setView({ kind: 'explore' })}
             />
-            <NavItem icon={Star} label="评审" />
+            <NavItem
+              icon={Star}
+              label="评审"
+              active={view.kind === 'review'}
+              onClick={() => setView({ kind: 'review' })}
+            />
             <NavItem icon={Heart} label="喜欢" />
 
             <div className="mt-6">
@@ -435,8 +441,8 @@ function App(): React.JSX.Element {
               </div>
             )}
 
-            {/* 缩略图尺寸切换（小 / 中 / 大）— 所有 Masonry 视图通用，靠右 */}
-            {rootPath && !isScanning && (
+            {/* 缩略图尺寸切换 — 评审模式无 masonry，不需要此按钮 */}
+            {rootPath && !isScanning && view.kind !== 'review' && (
               <button
                 onClick={cycleGridSize}
                 className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
@@ -455,6 +461,8 @@ function App(): React.JSX.Element {
               <ScanProgressPanel progress={scanProgress} />
             ) : !rootPath ? (
               <EmptyState onSelect={handleSelectRoot} />
+            ) : view.kind === 'review' ? (
+              <ReviewView />
             ) : view.kind === 'category' ? (
               <CategoryView key={view.id} categoryId={view.id} />
             ) : (

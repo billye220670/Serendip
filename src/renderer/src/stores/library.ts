@@ -13,6 +13,7 @@ interface ScanProgress {
 /** 主区域当前视图 */
 export type View =
   | { kind: 'explore' }
+  | { kind: 'review' }
   | { kind: 'category'; id: number }
 
 interface LibraryState {
