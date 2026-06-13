@@ -83,6 +83,7 @@ export function ReviewView(): React.JSX.Element {
   }, [rootPath, queue.length, exhausted, fetchMore])
 
   const currentItem = queue[0] ?? null
+  const nextItem = queue[1] ?? null
 
   // 当前卡片变更时，加载其分类归属
   useEffect(() => {
@@ -268,8 +269,35 @@ export function ReviewView(): React.JSX.Element {
 
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
-      {/* 卡片居中容器 */}
-      <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+      {/* 层 0 — 下一张卡（静态，无 overflow-hidden，拖拽时从后方露出） */}
+      <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 0 }}>
+        {nextItem && (
+          <div
+            className="flex-shrink-0 rounded-3xl overflow-hidden"
+            style={{ transform: 'scale(0.95) translateY(6px)', opacity: 0.8 }}
+          >
+            <img
+              src={`serendip://thumb/${nextItem.id}`}
+              alt=""
+              draggable={false}
+              style={{
+                display: 'block',
+                height: 'calc(100vh - 80px)',
+                width: 'auto',
+                maxWidth: 'calc(100vw - 256px)',
+                pointerEvents: 'none',
+                userSelect: 'none'
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* 层 1 — 当前卡（overflow-hidden 裁剪飞出动画） */}
+      <div
+        className="absolute inset-0 flex items-center justify-center overflow-hidden"
+        style={{ zIndex: 1 }}
+      >
         {currentItem && (
           <div
             key={currentItem.id}
@@ -320,13 +348,6 @@ export function ReviewView(): React.JSX.Element {
               不感兴趣
             </div>
 
-            {/*
-             * 媒体：height 用 vh 绝对值撑满面板（100vh - header64 - 上下各8px = 80px）
-             * width: auto 让浏览器按图片固有比例计算；
-             * max-width 对横向宽图封顶（100vw - sidebar240 - 左右各8px = 256px）。
-             * 对 <img>/<video> 这两类 replaced element，max-width 超限时浏览器会同步缩小 height，
-             * 不会出现拉伸，也不需要 object-fit 裁切。
-             */}
             {currentItem.type === 'video' ? (
               <video
                 src={`serendip://video/${currentItem.id}`}
