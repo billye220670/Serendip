@@ -266,15 +266,9 @@ export function ReviewView(): React.JSX.Element {
   const likeAlpha = Math.min(1, Math.max(0, (dx - 30) / 70))
   const nopeAlpha = Math.min(1, Math.max(0, (-dx - 30) / 70))
 
-  // 卡片尺寸：高度撑满面板，宽度按图片原始比例自适应
-  const cardAspectRatio =
-    currentItem?.width && currentItem?.height
-      ? `${currentItem.width} / ${currentItem.height}`
-      : undefined
-
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
-      {/* 卡片居中容器 — overflow-hidden 裁剪飞出动画 */}
+      {/* 卡片居中容器 */}
       <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
         {currentItem && (
           <div
@@ -282,12 +276,6 @@ export function ReviewView(): React.JSX.Element {
             ref={cardRef}
             className="relative flex-shrink-0 rounded-3xl overflow-hidden cursor-grab active:cursor-grabbing"
             style={{
-              height: 'calc(100% - 32px)',
-              maxWidth: 'calc(100% - 32px)',
-              // 有尺寸数据则按比例；否则退到撑满宽度
-              ...(cardAspectRatio
-                ? { aspectRatio: cardAspectRatio }
-                : { width: 'calc(100% - 32px)' }),
               transform: `translateX(${cardDx}px) translateY(${cardDy}px) rotate(${rotate}deg)`,
               transition: isFly
                 ? 'transform 0.22s ease-out, opacity 0.22s ease-out'
@@ -332,7 +320,13 @@ export function ReviewView(): React.JSX.Element {
               不感兴趣
             </div>
 
-            {/* 媒体内容 */}
+            {/*
+             * 媒体：height 用 vh 绝对值撑满面板（100vh - header64 - 上下各8px = 80px）
+             * width: auto 让浏览器按图片固有比例计算；
+             * max-width 对横向宽图封顶（100vw - sidebar240 - 左右各8px = 256px）。
+             * 对 <img>/<video> 这两类 replaced element，max-width 超限时浏览器会同步缩小 height，
+             * 不会出现拉伸，也不需要 object-fit 裁切。
+             */}
             {currentItem.type === 'video' ? (
               <video
                 src={`serendip://video/${currentItem.id}`}
@@ -340,55 +334,66 @@ export function ReviewView(): React.JSX.Element {
                 muted
                 loop
                 playsInline
-                className="w-full h-full object-cover"
-                style={{ pointerEvents: 'none' }}
+                style={{
+                  display: 'block',
+                  height: 'calc(100vh - 80px)',
+                  width: 'auto',
+                  maxWidth: 'calc(100vw - 256px)',
+                  pointerEvents: 'none'
+                }}
               />
             ) : (
               <img
                 src={`serendip://thumb/${currentItem.id}`}
                 alt=""
-                className="w-full h-full object-cover"
                 draggable={false}
-                style={{ pointerEvents: 'none' }}
+                style={{
+                  display: 'block',
+                  height: 'calc(100vh - 80px)',
+                  width: 'auto',
+                  maxWidth: 'calc(100vw - 256px)',
+                  pointerEvents: 'none',
+                  userSelect: 'none'
+                }}
               />
             )}
           </div>
         )}
       </div>
 
-      {/* 撤销 — 面板左上角 */}
+      {/* 撤销 — 左上角，大按钮，深色底 */}
       <button
-        className="absolute top-7 left-7 z-20 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
+        className="absolute top-8 left-8 z-20 p-3 rounded-full bg-black/50 text-white hover:bg-black/65 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
         onClick={() => void doUndo()}
         disabled={undoStackRef.current.length === 0}
         title="撤销（Backspace）"
       >
-        <Undo2 className="w-5 h-5" />
+        <Undo2 className="w-6 h-6" />
       </button>
 
-      {/* 跳过 — 面板右上角，与撤销同高 */}
+      {/* 跳过 — 右上角，与撤销同高 */}
       <button
-        className="absolute top-7 right-7 z-20 p-2 rounded-full bg-black/30 text-white hover:bg-black/50 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
+        className="absolute top-8 right-8 z-20 p-3 rounded-full bg-black/50 text-white hover:bg-black/65 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
         onClick={() => void doSkip()}
         disabled={!currentItem || isFly}
         title="跳过（Space）"
       >
-        <SkipForward className="w-5 h-5" />
+        <SkipForward className="w-6 h-6" />
       </button>
 
-      {/* 分类胶囊 — 固定在面板底部，不随卡片移动 */}
+      {/* 分类胶囊 — 固定面板底部，大号，深色，多缩进 */}
       {categories.length > 0 && currentItem && (
-        <div className="absolute bottom-0 left-0 right-0 z-20 px-5 pb-5 pt-3 flex flex-wrap gap-2">
+        <div className="absolute bottom-0 left-0 right-0 z-20 px-8 pb-8 pt-4 flex flex-wrap gap-2.5">
           {categories.map((cat) => (
             <button
               key={cat.id}
               onClick={() => void toggleCategory(cat.id)}
               disabled={isFly}
               className={clsx(
-                'px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors backdrop-blur-md',
+                'px-5 py-2 rounded-full text-base font-medium transition-colors backdrop-blur-md',
                 itemCategoryIds.has(cat.id)
                   ? 'bg-primary text-white'
-                  : 'bg-black/30 text-white/85 hover:bg-black/45 border border-white/10'
+                  : 'bg-black/50 text-white/90 hover:bg-black/65 border border-white/10'
               )}
             >
               {cat.name}
