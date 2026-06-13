@@ -2,11 +2,12 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { MasonryPhotoAlbum } from 'react-photo-album'
 import 'react-photo-album/masonry.css'
 import { useInView } from 'react-intersection-observer'
-import { Loader2, Heart, HeartOff, EyeOff, FolderOpen } from 'lucide-react'
+import { Loader2, Heart, HeartOff, EyeOff, FolderOpen, Folder } from 'lucide-react'
 import { MediaCard } from '../components/MediaCard'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { useUIStore } from '../stores/ui'
 import { useLibraryStore } from '../stores/library'
+import { useCategoriesStore } from '../stores/categories'
 import type { MediaItem } from '../../../main/recommender'
 
 const BATCH_SIZE = 30
@@ -30,6 +31,8 @@ export function ExploreView(): React.JSX.Element {
   const exploreMode = useUIStore((s) => s.exploreMode)
   const rootPath = useLibraryStore((s) => s.rootPath)
   const loadStats = useLibraryStore((s) => s.loadStats)
+  const categories = useCategoriesStore((s) => s.categories)
+  const addItemsToCategory = useCategoriesStore((s) => s.addItems)
 
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -135,6 +138,17 @@ export function ExploreView(): React.JSX.Element {
     }
   }, [])
 
+  const handleAddToCategory = useCallback(
+    async (item: MediaItem, categoryId: number) => {
+      try {
+        await addItemsToCategory(categoryId, [item.id])
+      } catch (err) {
+        console.error('addItemsToCategory failed:', err)
+      }
+    },
+    [addItemsToCategory]
+  )
+
   /** 缩略图加载失败 → 标记失效并从列表移除 */
   const handleThumbError = useCallback(
     async (item: MediaItem) => {
@@ -194,6 +208,20 @@ export function ExploreView(): React.JSX.Element {
           icon: FolderOpen,
           onClick: () => void handleReveal(menu.item)
         },
+        // 添加到分类（只有存在分类时才显示）
+        ...(categories.length > 0
+          ? ([
+              { key: 'div-cat', divider: true },
+              { key: 'h-cat', header: true, label: '添加到分类' },
+              ...categories.map<ContextMenuItem>((c) => ({
+                key: `cat-${c.id}`,
+                label: c.name,
+                icon: Folder,
+                onClick: () => void handleAddToCategory(menu.item, c.id)
+              }))
+            ] as ContextMenuItem[])
+          : []),
+        { key: 'div-end', divider: true },
         {
           key: 'dislike',
           label: '不感兴趣',

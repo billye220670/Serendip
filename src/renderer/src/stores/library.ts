@@ -10,13 +10,20 @@ interface ScanProgress {
   currentPath?: string
 }
 
+/** 主区域当前视图 */
+export type View =
+  | { kind: 'explore' }
+  | { kind: 'category'; id: number }
+
 interface LibraryState {
   rootPath: string | null
   isScanning: boolean
   scanProgress: ScanProgress | null
   stats: { totalFiles: number; totalFolders: number; liked: number } | null
+  view: View
 
   setRootPath: (path: string | null) => void
+  setView: (view: View) => void
   startScan: (path: string) => Promise<void>
   updateProgress: (progress: ScanProgress) => void
   loadCurrentRoot: () => Promise<void>
@@ -28,8 +35,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   isScanning: false,
   scanProgress: null,
   stats: null,
+  view: { kind: 'explore' },
 
   setRootPath: (path) => set({ rootPath: path }),
+  setView: (view) => set({ view }),
 
   startScan: async (path: string) => {
     set({ isScanning: true, scanProgress: null })

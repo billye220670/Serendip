@@ -125,6 +125,16 @@ function runMigrations(db: Database.Database): void {
         ALTER TABLE media_files ADD COLUMN unavailable_reason TEXT;
         CREATE INDEX idx_files_unavailable ON media_files(unavailable) WHERE unavailable = 1;
       `
+    },
+    // 迁移 3: 分类排序位置（用于侧栏拖拽重排）
+    {
+      version: 3,
+      up: `
+        ALTER TABLE categories ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX idx_categories_position ON categories(position);
+        -- 给已存在的分类按 id 排个初始位置
+        UPDATE categories SET position = id;
+      `
     }
   ]
 

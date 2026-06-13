@@ -21,6 +21,20 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.MARK_UNAVAILABLE, fileId, reason),
   revealInFolder: (fileId: number) => ipcRenderer.invoke(IPC.REVEAL_IN_FOLDER, fileId),
 
+  listCategories: () => ipcRenderer.invoke(IPC.LIST_CATEGORIES),
+  createCategory: (name: string) => ipcRenderer.invoke(IPC.CREATE_CATEGORY, name),
+  renameCategory: (id: number, newName: string) =>
+    ipcRenderer.invoke(IPC.RENAME_CATEGORY, id, newName),
+  deleteCategory: (id: number) => ipcRenderer.invoke(IPC.DELETE_CATEGORY, id),
+  reorderCategories: (orderedIds: number[]) =>
+    ipcRenderer.invoke(IPC.REORDER_CATEGORIES, orderedIds),
+  getCategoryItems: (categoryId: number) =>
+    ipcRenderer.invoke(IPC.GET_CATEGORY_ITEMS, categoryId),
+  addItemsToCategory: (categoryId: number, fileIds: number[]) =>
+    ipcRenderer.invoke(IPC.ADD_ITEMS_TO_CATEGORY, categoryId, fileIds),
+  removeItemFromCategory: (categoryId: number, fileId: number) =>
+    ipcRenderer.invoke(IPC.REMOVE_ITEM_FROM_CATEGORY, categoryId, fileId),
+
   onScanProgress: (callback: (progress: ScanProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => {
       callback(progress)

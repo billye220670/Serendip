@@ -1,7 +1,29 @@
-import { useEffect } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import {
+  DndContext,
+  DragOverlay,
+  pointerWithin,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+  type CollisionDetection,
+  type Modifier
+} from '@dnd-kit/core'
+import { arrayMove } from '@dnd-kit/sortable'
+import { getEventCoordinates } from '@dnd-kit/utilities'
 import { useUIStore } from './stores/ui'
 import { useLibraryStore } from './stores/library'
+import { useCategoriesStore } from './stores/categories'
 import { ExploreView } from './views/Explore'
+import { CategoryView } from './views/CategoryView'
+import { CategoryList } from './components/CategoryList'
+import { PromptDialog } from './components/PromptDialog'
+import { ConfirmDialog } from './components/ConfirmDialog'
+import { MediaDragPreview, CategoryDragPreview } from './components/DragPreview'
 import {
   Sun,
   Moon,
@@ -9,9 +31,59 @@ import {
   Star,
   Heart,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  Plus
 } from 'lucide-react'
 import clsx from 'clsx'
+import type { Category } from '../../main/categories'
+import type { MediaItem } from '../../main/recommender'
+
+type DragType = 'category' | 'media' | null
+
+/** 当前拖拽中的对象，用于渲染 DragOverlay 浮层 */
+type ActiveDrag =
+  | { type: 'media'; item: MediaItem }
+  | { type: 'category'; name: string }
+  | null
+
+/**
+ * 让 DragOverlay 浮层中心始终吸附到鼠标位置（像大多数软件那样）。
+ *
+ * dnd-kit 默认把浮层锚定在"抓取时元素所在位置 + 位移"，
+ * 这里改成以光标为中心：用浮层自身尺寸（overlayNodeRect）计算偏移，
+ * 因为浮层尺寸和源卡片不同。
+ */
+const snapToCursor: Modifier = ({
+  activatorEvent,
+  draggingNodeRect,
+  overlayNodeRect,
+  transform
+}) => {
+  if (!draggingNodeRect || !activatorEvent) return transform
+  const coords = getEventCoordinates(activatorEvent)
+  if (!coords) return transform
+  const rect = overlayNodeRect ?? draggingNodeRect
+  return {
+    ...transform,
+    x: transform.x + coords.x - draggingNodeRect.left - rect.width / 2,
+    y: transform.y + coords.y - draggingNodeRect.top - rect.height / 2
+  }
+}
+
+/**
+ * 以鼠标位置判断投放目标（而非浮层的包围盒）。
+ *
+ * - 优先 pointerWithin：指针必须真正落在某个 droppable 上才命中
+ * - 媒体拖拽：严格模式，落空就返回空，绝不"就近"高亮分类
+ *   （指针没到分类上时不该有任何响应，便于将来扩展其它拖拽行为）
+ * - 分类重排：落空时回退 closestCenter，让指针在行间隙也能顺滑排序
+ */
+const collisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args)
+  if (pointerCollisions.length > 0) return pointerCollisions
+  if (args.active.data.current?.type === 'media') return []
+  return closestCenter(args)
+}
 
 function App(): React.JSX.Element {
   const { theme, toggleTheme, exploreMode, setExploreMode } = useUIStore()
@@ -20,13 +92,40 @@ function App(): React.JSX.Element {
     isScanning,
     scanProgress,
     stats,
+    view,
+    setView,
     loadCurrentRoot,
     startScan
   } = useLibraryStore()
+  const categories = useCategoriesStore((s) => s.categories)
+  const loadCategories = useCategoriesStore((s) => s.load)
+  const createCategory = useCategoriesStore((s) => s.create)
+  const renameCategory = useCategoriesStore((s) => s.rename)
+  const removeCategory = useCategoriesStore((s) => s.remove)
+  const reorderCategories = useCategoriesStore((s) => s.reorder)
+  const addItemsToCategory = useCategoriesStore((s) => s.addItems)
+
+  // 弹窗状态
+  const [showCreate, setShowCreate] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<Category | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
+
+  // 拖拽状态
+  const [dragType, setDragType] = useState<DragType>(null)
+  const [activeDrag, setActiveDrag] = useState<ActiveDrag>(null)
+  const [hoveredDropCategoryId, setHoveredDropCategoryId] = useState<number | null>(
+    null
+  )
+
+  // 8px 的距离阈值：单击不会触发拖拽
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
 
   useEffect(() => {
     loadCurrentRoot()
-  }, [loadCurrentRoot])
+    void loadCategories()
+  }, [loadCurrentRoot, loadCategories])
 
   const handleSelectRoot = async (): Promise<void> => {
     const path = await window.api.selectRootDirectory()
@@ -39,112 +138,302 @@ function App(): React.JSX.Element {
     if (rootPath) await startScan(rootPath)
   }
 
+  const handleDragStart = useCallback((e: DragStartEvent) => {
+    const data = e.active.data.current
+    const t = data?.type
+    if (t === 'media') {
+      setDragType('media')
+      setActiveDrag({ type: 'media', item: data?.item as MediaItem })
+    } else if (t === 'category') {
+      setDragType('category')
+      setActiveDrag({ type: 'category', name: data?.name as string })
+    }
+  }, [])
+
+  const handleDragOver = useCallback(
+    (e: DragOverEvent) => {
+      if (dragType !== 'media') return
+      const overData = e.over?.data.current
+      if (overData?.type === 'category') {
+        setHoveredDropCategoryId(overData.categoryId as number)
+      } else {
+        setHoveredDropCategoryId(null)
+      }
+    },
+    [dragType]
+  )
+
+  const handleDragEnd = useCallback(
+    async (e: DragEndEvent) => {
+      const activeType = e.active.data.current?.type
+      const overData = e.over?.data.current
+
+      // 重置拖拽状态
+      setDragType(null)
+      setActiveDrag(null)
+      setHoveredDropCategoryId(null)
+
+      if (!e.over) return
+
+      // 1) 分类重排
+      if (activeType === 'category' && overData?.type === 'category') {
+        const oldIndex = categories.findIndex(
+          (c) => c.id === e.active.data.current?.categoryId
+        )
+        const newIndex = categories.findIndex(
+          (c) => c.id === overData.categoryId
+        )
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          const reordered = arrayMove(categories, oldIndex, newIndex)
+          await reorderCategories(reordered.map((c) => c.id))
+        }
+        return
+      }
+
+      // 2) 媒体投放到分类
+      if (activeType === 'media' && overData?.type === 'category') {
+        const fileId = e.active.data.current?.fileId as number
+        const categoryId = overData.categoryId as number
+        try {
+          await addItemsToCategory(categoryId, [fileId])
+        } catch (err) {
+          console.error('addItemsToCategory failed:', err)
+        }
+      }
+    },
+    [categories, reorderCategories, addItemsToCategory]
+  )
+
+  const handleCreateCategory = async (
+    name: string
+  ): Promise<void | string> => {
+    try {
+      await createCategory(name)
+      setShowCreate(false)
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  const handleRenameCategory = async (
+    name: string
+  ): Promise<void | string> => {
+    if (!renameTarget) return
+    try {
+      await renameCategory(renameTarget.id, name)
+      setRenameTarget(null)
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  const handleConfirmDelete = async (): Promise<void> => {
+    if (!deleteTarget) return
+    const id = deleteTarget.id
+    setDeleteTarget(null)
+    try {
+      await removeCategory(id)
+      // 当前正在看这个分类则跳回探索
+      if (view.kind === 'category' && view.id === id) {
+        setView({ kind: 'explore' })
+      }
+    } catch (err) {
+      console.error('deleteCategory failed:', err)
+    }
+  }
+
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      {/* 左侧边栏 */}
-      <aside className="w-60 flex-shrink-0 flex flex-col border-r border-border bg-sidebar h-screen sticky top-0">
-        <div className="h-16 flex items-center px-5 border-b border-border">
-          <h1 className="text-xl font-bold text-primary">Serendip</h1>
-        </div>
-
-        <nav className="flex-1 py-4 overflow-y-auto">
-          <NavItem icon={Compass} label="探索" active />
-          <NavItem icon={Star} label="评审" />
-          <NavItem icon={Heart} label="喜欢" />
-
-          <div className="mt-6 px-3">
-            <div className="flex items-center justify-between px-2 py-1.5 text-xs font-semibold text-muted-foreground">
-              <span>收藏分类</span>
-              <button className="hover:text-foreground transition-colors">
-                <span className="text-base">+</span>
-              </button>
-            </div>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => {
+        setDragType(null)
+        setActiveDrag(null)
+        setHoveredDropCategoryId(null)
+      }}
+    >
+      <div className="flex min-h-screen bg-background text-foreground">
+        {/* 左侧边栏 */}
+        <aside className="w-60 flex-shrink-0 flex flex-col border-r border-border bg-sidebar h-screen sticky top-0">
+          <div className="h-16 flex items-center px-5 border-b border-border">
+            <h1 className="text-xl font-bold text-primary">Serendip</h1>
           </div>
-        </nav>
 
-        <div className="border-t border-border p-3 space-y-2">
-          {stats && (
-            <div className="text-xs text-muted-foreground space-y-0.5 px-2">
-              <div>{stats.totalFiles.toLocaleString()} 个文件</div>
-              <div>{stats.totalFolders.toLocaleString()} 个文件夹</div>
-              <div>{stats.liked.toLocaleString()} 个喜欢</div>
-            </div>
-          )}
-          <div className="flex justify-end">
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg hover:bg-muted transition-colors"
-              title="切换主题"
-            >
-              {theme === 'light' ? (
-                <Moon className="w-5 h-5" />
-              ) : (
-                <Sun className="w-5 h-5" />
-              )}
-            </button>
-          </div>
-        </div>
-      </aside>
+          <nav className="flex-1 py-4 overflow-y-auto">
+            <NavItem
+              icon={Compass}
+              label="探索"
+              active={view.kind === 'explore'}
+              onClick={() => setView({ kind: 'explore' })}
+            />
+            <NavItem icon={Star} label="评审" />
+            <NavItem icon={Heart} label="喜欢" />
 
-      {/* 右侧主区域 */}
-      <main className="flex-1 flex flex-col min-w-0">
-        <header className="h-16 flex-shrink-0 sticky top-0 z-10 flex items-center px-6 border-b border-border gap-4 bg-background/95 backdrop-blur">
-          <button
-            onClick={handleSelectRoot}
-            disabled={isScanning}
-            className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
-          >
-            {rootPath ? '更换根目录' : '选择根目录'}
-          </button>
-          {rootPath && (
-            <>
-              <div className="text-sm text-muted-foreground truncate max-w-md">
-                {rootPath}
+            <div className="mt-6">
+              <div className="px-5 flex items-center justify-between py-1.5 text-xs font-semibold text-muted-foreground">
+                <span>收藏分类</span>
+                <button
+                  className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-muted"
+                  title="新建分类"
+                  onClick={() => setShowCreate(true)}
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
               </div>
+
+              <CategoryList
+                activeDragType={dragType}
+                hoveredDropCategoryId={hoveredDropCategoryId}
+                onRename={(c) => setRenameTarget(c)}
+                onDelete={(c) => setDeleteTarget(c)}
+              />
+            </div>
+          </nav>
+
+          <div className="border-t border-border p-3 space-y-2">
+            {stats && (
+              <div className="text-xs text-muted-foreground space-y-0.5 px-2">
+                <div>{stats.totalFiles.toLocaleString()} 个文件</div>
+                <div>{stats.totalFolders.toLocaleString()} 个文件夹</div>
+                <div>{stats.liked.toLocaleString()} 个喜欢</div>
+              </div>
+            )}
+            <div className="flex justify-end">
               <button
-                onClick={handleRescan}
-                disabled={isScanning}
-                className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
-                title="重新扫描"
+                onClick={toggleTheme}
+                className="p-2 rounded-lg hover:bg-muted transition-colors"
+                title="切换主题"
               >
-                <RefreshCw
-                  className={clsx('w-4 h-4', isScanning && 'animate-spin')}
-                />
+                {theme === 'light' ? (
+                  <Moon className="w-5 h-5" />
+                ) : (
+                  <Sun className="w-5 h-5" />
+                )}
               </button>
-            </>
-          )}
-
-          {/* 三段探索程度 */}
-          <div className="flex-1 flex items-center justify-center gap-1">
-            <SegmentButton
-              label="更多喜欢"
-              active={exploreMode === 'prefer'}
-              onClick={() => setExploreMode('prefer')}
-            />
-            <SegmentButton
-              label="均衡"
-              active={exploreMode === 'balanced'}
-              onClick={() => setExploreMode('balanced')}
-            />
-            <SegmentButton
-              label="更多探索"
-              active={exploreMode === 'explore'}
-              onClick={() => setExploreMode('explore')}
-            />
+            </div>
           </div>
-        </header>
+        </aside>
 
-        <div className="flex-1 bg-background">
-          {isScanning ? (
-            <ScanProgressPanel progress={scanProgress} />
-          ) : !rootPath ? (
-            <EmptyState onSelect={handleSelectRoot} />
-          ) : (
-            <ExploreView />
-          )}
-        </div>
-      </main>
-    </div>
+        {/* 右侧主区域 */}
+        <main className="flex-1 flex flex-col min-w-0">
+          <header className="h-16 flex-shrink-0 sticky top-0 z-10 flex items-center px-6 border-b border-border gap-4 bg-background/95 backdrop-blur">
+            <button
+              onClick={handleSelectRoot}
+              disabled={isScanning}
+              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              {rootPath ? '更换根目录' : '选择根目录'}
+            </button>
+            {rootPath && (
+              <>
+                <div className="text-sm text-muted-foreground truncate max-w-md">
+                  {rootPath}
+                </div>
+                <button
+                  onClick={handleRescan}
+                  disabled={isScanning}
+                  className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                  title="重新扫描"
+                >
+                  <RefreshCw
+                    className={clsx('w-4 h-4', isScanning && 'animate-spin')}
+                  />
+                </button>
+              </>
+            )}
+
+            {/* 三段探索程度（只在探索视图下显示，分类视图无意义） */}
+            {view.kind === 'explore' && (
+              <div className="flex-1 flex items-center justify-center gap-1">
+                <SegmentButton
+                  label="更多喜欢"
+                  active={exploreMode === 'prefer'}
+                  onClick={() => setExploreMode('prefer')}
+                />
+                <SegmentButton
+                  label="均衡"
+                  active={exploreMode === 'balanced'}
+                  onClick={() => setExploreMode('balanced')}
+                />
+                <SegmentButton
+                  label="更多探索"
+                  active={exploreMode === 'explore'}
+                  onClick={() => setExploreMode('explore')}
+                />
+              </div>
+            )}
+          </header>
+
+          <div className="flex-1 bg-background">
+            {isScanning ? (
+              <ScanProgressPanel progress={scanProgress} />
+            ) : !rootPath ? (
+              <EmptyState onSelect={handleSelectRoot} />
+            ) : view.kind === 'category' ? (
+              <CategoryView key={view.id} categoryId={view.id} />
+            ) : (
+              <ExploreView />
+            )}
+          </div>
+        </main>
+      </div>
+
+      {/* 新建分类 */}
+      {showCreate && (
+        <PromptDialog
+          title="新建分类"
+          hint="给这个分类起个名字"
+          placeholder="例如：旅行、宠物、灵感板"
+          confirmLabel="创建"
+          onConfirm={handleCreateCategory}
+          onCancel={() => setShowCreate(false)}
+        />
+      )}
+
+      {/* 重命名分类 */}
+      {renameTarget && (
+        <PromptDialog
+          title="重命名分类"
+          initialValue={renameTarget.name}
+          confirmLabel="保存"
+          onConfirm={handleRenameCategory}
+          onCancel={() => setRenameTarget(null)}
+        />
+      )}
+
+      {/* 删除分类二次确认 */}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="删除分类"
+          message={
+            <>
+              确定要删除分类「<strong>{deleteTarget.name}</strong>」吗？
+              <br />
+              <span className="text-xs text-muted-foreground">
+                包含的 {deleteTarget.itemCount} 项关联会一并清除，
+                但原始文件不会被删除。
+              </span>
+            </>
+          }
+          confirmLabel="删除"
+          danger
+          onConfirm={handleConfirmDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {/* 拖拽浮层 — 中心吸附到鼠标，跟随光标 */}
+      <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
+        {activeDrag?.type === 'media' ? (
+          <MediaDragPreview item={activeDrag.item} />
+        ) : activeDrag?.type === 'category' ? (
+          <CategoryDragPreview name={activeDrag.name} />
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   )
 }
 
@@ -282,15 +571,18 @@ interface NavItemProps {
   icon: React.ElementType
   label: string
   active?: boolean
+  onClick?: () => void
 }
 
 function NavItem({
   icon: Icon,
   label,
-  active
+  active,
+  onClick
 }: NavItemProps): React.JSX.Element {
   return (
     <button
+      onClick={onClick}
       className={clsx(
         'w-full flex items-center gap-3 px-5 py-2.5 text-sm font-medium transition-colors',
         active ? 'text-primary bg-primary/10' : 'text-foreground hover:bg-muted'

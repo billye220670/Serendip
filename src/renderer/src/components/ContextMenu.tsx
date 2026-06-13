@@ -1,13 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 
 export interface ContextMenuItem {
   key: string
-  label: string
+  /** 分隔线项 — 设为 true 时其它字段忽略 */
+  divider?: boolean
+  /** 分组标题（不可点击的灰色小标） */
+  header?: boolean
+  label?: string
   icon?: React.ElementType
   /** 危险操作（红色文字），如"不感兴趣" */
   danger?: boolean
-  onClick: () => void
+  onClick?: () => void
 }
 
 export interface ContextMenuProps {
@@ -78,15 +83,34 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): React.J
     }
   }, [onClose])
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       role="menu"
       style={{ left: position.left, top: position.top }}
-      className="fixed z-50 min-w-[180px] py-1 rounded-lg border border-border bg-background shadow-lg shadow-black/20 animate-in"
+      className="fixed z-[100] min-w-[180px] py-1 rounded-lg border border-border bg-background shadow-lg shadow-black/20 animate-in"
       onContextMenu={(e) => e.preventDefault()}
     >
       {items.map((item) => {
+        if (item.divider) {
+          return (
+            <div
+              key={item.key}
+              role="separator"
+              className="my-1 mx-2 h-px bg-border"
+            />
+          )
+        }
+        if (item.header) {
+          return (
+            <div
+              key={item.key}
+              className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+            >
+              {item.label}
+            </div>
+          )
+        }
         const Icon = item.icon
         return (
           <button
@@ -94,7 +118,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): React.J
             role="menuitem"
             onClick={(e) => {
               e.stopPropagation()
-              item.onClick()
+              item.onClick?.()
               onClose()
             }}
             className={clsx(
@@ -109,6 +133,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): React.J
           </button>
         )
       })}
-    </div>
+    </div>,
+    document.body
   )
 }

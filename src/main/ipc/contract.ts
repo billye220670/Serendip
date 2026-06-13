@@ -4,6 +4,7 @@
 
 import type { ScanProgress } from '../scanner'
 import type { MediaItem, ExploreMode } from '../recommender'
+import type { Category } from '../categories'
 
 // 主进程暴露给渲染进程的 API
 export interface SerendipAPI {
@@ -19,6 +20,16 @@ export interface SerendipAPI {
   setDisliked(fileId: number, disliked: boolean): Promise<void>
   markUnavailable(fileId: number, reason: string): Promise<void>
   revealInFolder(fileId: number): Promise<void>
+
+  // ===== 收藏分类 =====
+  listCategories(): Promise<Category[]>
+  createCategory(name: string): Promise<number>
+  renameCategory(id: number, newName: string): Promise<void>
+  deleteCategory(id: number): Promise<void>
+  reorderCategories(orderedIds: number[]): Promise<void>
+  getCategoryItems(categoryId: number): Promise<MediaItem[]>
+  addItemsToCategory(categoryId: number, fileIds: number[]): Promise<number>
+  removeItemFromCategory(categoryId: number, fileId: number): Promise<void>
 
   // ===== 进度订阅 =====
   onScanProgress(callback: (progress: ScanProgress) => void): () => void
@@ -42,5 +53,13 @@ export const IPC = {
   SET_LIKED: 'serendip:setLiked',
   SET_DISLIKED: 'serendip:setDisliked',
   MARK_UNAVAILABLE: 'serendip:markUnavailable',
-  REVEAL_IN_FOLDER: 'serendip:revealInFolder'
+  REVEAL_IN_FOLDER: 'serendip:revealInFolder',
+  LIST_CATEGORIES: 'serendip:listCategories',
+  CREATE_CATEGORY: 'serendip:createCategory',
+  RENAME_CATEGORY: 'serendip:renameCategory',
+  DELETE_CATEGORY: 'serendip:deleteCategory',
+  REORDER_CATEGORIES: 'serendip:reorderCategories',
+  GET_CATEGORY_ITEMS: 'serendip:getCategoryItems',
+  ADD_ITEMS_TO_CATEGORY: 'serendip:addItemsToCategory',
+  REMOVE_ITEM_FROM_CATEGORY: 'serendip:removeItemFromCategory'
 } as const

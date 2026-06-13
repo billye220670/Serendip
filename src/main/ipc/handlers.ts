@@ -4,6 +4,16 @@ import { IPC } from './contract'
 import { getDatabase } from '../db'
 import { scanRoot, type ScanProgress } from '../scanner'
 import { recommend, type ExploreMode } from '../recommender'
+import {
+  listCategories,
+  createCategory,
+  renameCategory,
+  deleteCategory,
+  reorderCategories,
+  getCategoryItems,
+  addItemsToCategory,
+  removeItemFromCategory
+} from '../categories'
 
 export function registerIpcHandlers(): void {
   // 选择根目录
@@ -87,6 +97,26 @@ export function registerIpcHandlers(): void {
     }
     shell.showItemInFolder(row.path)
   })
+
+  // ===== 收藏分类 =====
+  ipcMain.handle(IPC.LIST_CATEGORIES, () => listCategories())
+  ipcMain.handle(IPC.CREATE_CATEGORY, (_event, name: string) => createCategory(name))
+  ipcMain.handle(IPC.RENAME_CATEGORY, (_event, id: number, newName: string) =>
+    renameCategory(id, newName)
+  )
+  ipcMain.handle(IPC.DELETE_CATEGORY, (_event, id: number) => deleteCategory(id))
+  ipcMain.handle(IPC.REORDER_CATEGORIES, (_event, orderedIds: number[]) =>
+    reorderCategories(orderedIds)
+  )
+  ipcMain.handle(IPC.GET_CATEGORY_ITEMS, (_event, categoryId: number) =>
+    getCategoryItems(categoryId)
+  )
+  ipcMain.handle(IPC.ADD_ITEMS_TO_CATEGORY, (_event, categoryId: number, fileIds: number[]) =>
+    addItemsToCategory(categoryId, fileIds)
+  )
+  ipcMain.handle(IPC.REMOVE_ITEM_FROM_CATEGORY, (_event, categoryId: number, fileId: number) =>
+    removeItemFromCategory(categoryId, fileId)
+  )
 }
 
 // 工具：向所有窗口广播进度（用于在异步过程中通知渲染层）

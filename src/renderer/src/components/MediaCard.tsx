@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useDraggable } from '@dnd-kit/core'
 import { Heart, MoreVertical, Play } from 'lucide-react'
 import clsx from 'clsx'
 import type { MediaItem } from '../../../main/recommender'
@@ -9,6 +10,8 @@ interface MediaCardProps {
   onContextMenu?: (e: React.MouseEvent, item: MediaItem) => void
   /** 缩略图加载失败时的回调（用于上报到主进程并从列表移除） */
   onThumbError?: (item: MediaItem) => void
+  /** 启用拖拽 — 用于把媒体拖到侧栏分类。默认开启 */
+  draggable?: boolean
 }
 
 const VIDEO_PLAY_LIMIT = 3 // 最多 3 个视频同时播放
@@ -78,7 +81,8 @@ export function MediaCard({
   item,
   onLikeToggle,
   onContextMenu,
-  onThumbError
+  onThumbError,
+  draggable = true
 }: MediaCardProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
   const [shouldPlayVideo, setShouldPlayVideo] = useState(false)
@@ -87,6 +91,19 @@ export function MediaCard({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const enterTimerRef = useRef<number | null>(null)
   const leaveTimerRef = useRef<number | null>(null)
+
+  // dnd-kit：把媒体注册成可拖拽对象。activationConstraint 见 App 的 PointerSensor 配置，
+  // 只有真正拖动 > 8px 才会触发，单击 / 右键 / hover 不受影响
+  const {
+    setNodeRef: setDragRef,
+    attributes: dragAttributes,
+    listeners: dragListeners,
+    isDragging: isDragHovering
+  } = useDraggable({
+    id: `media-${item.id}`,
+    data: { type: 'media', fileId: item.id, item },
+    disabled: !draggable
+  })
 
   // liked 直接以 props 为准（父级 setItems 后会自动同步）
   const liked = !!item.liked
@@ -215,7 +232,13 @@ export function MediaCard({
 
   return (
     <div
-      className="relative group rounded-lg overflow-hidden bg-muted cursor-pointer w-full h-full"
+      ref={setDragRef}
+      {...dragAttributes}
+      {...dragListeners}
+      className={clsx(
+        'relative group rounded-lg overflow-hidden bg-muted cursor-pointer w-full h-full',
+        isDragHovering && 'opacity-50'
+      )}
       onMouseEnter={handleHoverStart}
       onMouseLeave={handleHoverEnd}
       onContextMenu={(e) => onContextMenu?.(e, item)}
