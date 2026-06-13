@@ -24,6 +24,8 @@ interface LibraryState {
   view: View
   /** 递增计数，用于通知当前分类视图重新拉取（如跨视图"移动到此"后） */
   categoryRefreshNonce: number
+  /** 评审视图进度（null 表示当前不在评审视图） */
+  reviewProgress: { reviewed: number; pending: number } | null
 
   setRootPath: (path: string | null) => void
   setView: (view: View) => void
@@ -33,6 +35,7 @@ interface LibraryState {
   loadStats: () => Promise<void>
   /** 触发当前分类视图重载 */
   bumpCategoryRefresh: () => void
+  setReviewProgress: (p: { reviewed: number; pending: number } | null) => void
 }
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
@@ -42,11 +45,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   stats: null,
   view: { kind: 'explore' },
   categoryRefreshNonce: 0,
+  reviewProgress: null,
 
   setRootPath: (path) => set({ rootPath: path }),
   setView: (view) => set({ view }),
   bumpCategoryRefresh: () =>
     set((s) => ({ categoryRefreshNonce: s.categoryRefreshNonce + 1 })),
+  setReviewProgress: (p) => set({ reviewProgress: p }),
 
   startScan: async (path: string) => {
     set({ isScanning: true, scanProgress: null })

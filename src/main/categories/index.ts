@@ -154,3 +154,12 @@ export function removeItemsFromCategory(categoryId: number, fileIds: number[]): 
   })
   txn(fileIds)
 }
+
+/** 返回某个文件所属的所有分类 id（用于评审视图胶囊高亮） */
+export function getFileCategoryIds(fileId: number): number[] {
+  const db = getDatabase()
+  const rows = db
+    .prepare('SELECT category_id FROM category_items WHERE file_id = ?')
+    .all(fileId) as Array<{ category_id: number }>
+  return rows.map((r) => r.category_id)
+}

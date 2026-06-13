@@ -13,7 +13,8 @@ import {
   getCategoryItems,
   addItemsToCategory,
   removeItemFromCategory,
-  removeItemsFromCategory
+  removeItemsFromCategory,
+  getFileCategoryIds
 } from '../categories'
 
 export function registerIpcHandlers(): void {
@@ -142,6 +143,9 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC.REMOVE_ITEMS_FROM_CATEGORY, (_event, categoryId: number, fileIds: number[]) =>
     removeItemsFromCategory(categoryId, fileIds)
+  )
+  ipcMain.handle(IPC.GET_FILE_CATEGORY_IDS, (_event, fileId: number) =>
+    getFileCategoryIds(fileId)
   )
 }
 

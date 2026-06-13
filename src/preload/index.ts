@@ -40,6 +40,8 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.REMOVE_ITEM_FROM_CATEGORY, categoryId, fileId),
   removeItemsFromCategory: (categoryId: number, fileIds: number[]) =>
     ipcRenderer.invoke(IPC.REMOVE_ITEMS_FROM_CATEGORY, categoryId, fileIds),
+  getFileCategoryIds: (fileId: number) =>
+    ipcRenderer.invoke(IPC.GET_FILE_CATEGORY_IDS, fileId),
 
   onScanProgress: (callback: (progress: ScanProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => {

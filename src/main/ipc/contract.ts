@@ -36,6 +36,8 @@ export interface SerendipAPI {
   removeItemFromCategory(categoryId: number, fileId: number): Promise<void>
   /** 批量从分类移除（多选模式） */
   removeItemsFromCategory(categoryId: number, fileIds: number[]): Promise<void>
+  /** 返回文件所属的分类 id 列表（评审视图胶囊高亮用） */
+  getFileCategoryIds(fileId: number): Promise<number[]>
 
   // ===== 进度订阅 =====
   onScanProgress(callback: (progress: ScanProgress) => void): () => void
@@ -70,5 +72,6 @@ export const IPC = {
   GET_CATEGORY_ITEMS: 'serendip:getCategoryItems',
   ADD_ITEMS_TO_CATEGORY: 'serendip:addItemsToCategory',
   REMOVE_ITEM_FROM_CATEGORY: 'serendip:removeItemFromCategory',
-  REMOVE_ITEMS_FROM_CATEGORY: 'serendip:removeItemsFromCategory'
+  REMOVE_ITEMS_FROM_CATEGORY: 'serendip:removeItemsFromCategory',
+  GET_FILE_CATEGORY_IDS: 'serendip:getFileCategoryIds'
 } as const

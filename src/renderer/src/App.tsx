@@ -105,7 +105,8 @@ function App(): React.JSX.Element {
     setView,
     loadCurrentRoot,
     startScan,
-    bumpCategoryRefresh
+    bumpCategoryRefresh,
+    reviewProgress
   } = useLibraryStore()
   const categories = useCategoriesStore((s) => s.categories)
   const loadCategories = useCategoriesStore((s) => s.load)
@@ -453,6 +454,16 @@ function App(): React.JSX.Element {
                   {GRID_SIZE_LABEL[gridSize]}
                 </span>
               </button>
+            )}
+
+            {/* 评审进度 — 仅评审模式显示，靠右 */}
+            {view.kind === 'review' && reviewProgress && (
+              <span className="ml-auto flex-shrink-0 text-sm text-muted-foreground">
+                {reviewProgress.reviewed > 0
+                  ? `已评审 ${reviewProgress.reviewed} 张`
+                  : '开始评审'}
+                {reviewProgress.pending > 0 && ` · 还有约 ${reviewProgress.pending} 张`}
+              </span>
             )}
           </header>
 
