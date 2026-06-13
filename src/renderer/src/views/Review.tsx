@@ -10,7 +10,7 @@ type UndoAction =
   | { item: MediaItem; action: 'dislike' }
   | { item: MediaItem; action: 'skip' }
 
-const THRESHOLD_X = 160
+const THRESHOLD_X = 220
 const BUFFER_FILL = 10
 const LOW_WATER = 4
 
@@ -288,8 +288,8 @@ export function ReviewView(): React.JSX.Element {
   const cardDx = isFly ? flyState.dx : dx
   const cardDy = isFly ? flyState.dy : 0
   const rotate = isFly ? (flyState.dx > 0 ? 22 : -22) : dx / 18
-  const likeAlpha = Math.min(1, Math.max(0, (dx - 60) / 100))
-  const nopeAlpha = Math.min(1, Math.max(0, (-dx - 60) / 100))
+  const likeAlpha = Math.min(1, Math.max(0, (dx - 100) / 120))
+  const nopeAlpha = Math.min(1, Math.max(0, (-dx - 100) / 120))
 
   // 当前卡片的自然比例（无数据时退到固定卡片比例，入场无比例动画）
   const naturalRatio =
