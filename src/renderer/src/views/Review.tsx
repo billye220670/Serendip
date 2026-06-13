@@ -269,12 +269,12 @@ export function ReviewView(): React.JSX.Element {
 
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
-      {/* 层 0 — 下一张卡（静态，无 overflow-hidden，拖拽时从后方露出） */}
+      {/* 层 0 — 下一张卡（固定宽度，比例自适应高度，统一大小防止堆叠混乱） */}
       <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 0 }}>
         {nextItem && (
           <div
             className="flex-shrink-0 rounded-3xl overflow-hidden"
-            style={{ transform: 'scale(0.95) translateY(6px)', opacity: 0.8 }}
+            style={{ transform: 'scale(0.95) translateY(6px)', opacity: 0.75 }}
           >
             <img
               src={`serendip://thumb/${nextItem.id}`}
@@ -282,8 +282,8 @@ export function ReviewView(): React.JSX.Element {
               draggable={false}
               style={{
                 display: 'block',
-                height: 'calc(100vh - 80px)',
-                width: 'auto',
+                width: '360px',
+                height: 'auto',
                 maxWidth: 'calc(100vw - 256px)',
                 pointerEvents: 'none',
                 userSelect: 'none'
@@ -302,7 +302,7 @@ export function ReviewView(): React.JSX.Element {
           <div
             key={currentItem.id}
             ref={cardRef}
-            className="relative flex-shrink-0 rounded-3xl overflow-hidden cursor-grab active:cursor-grabbing"
+            className="card-enter relative flex-shrink-0 rounded-3xl overflow-hidden cursor-grab active:cursor-grabbing"
             style={{
               transform: `translateX(${cardDx}px) translateY(${cardDy}px) rotate(${rotate}deg)`,
               transition: isFly

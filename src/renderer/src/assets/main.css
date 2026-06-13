@@ -79,3 +79,12 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-muted-foreground);
 }
+
+/* 评审卡片入场动画：用独立的 scale 属性，不干扰 transform（拖拽）*/
+@keyframes card-enter {
+  from { scale: 0.93; opacity: 0.82; }
+  to   { scale: 1;    opacity: 1; }
+}
+.card-enter {
+  animation: card-enter 0.22s ease-out both;
+}
