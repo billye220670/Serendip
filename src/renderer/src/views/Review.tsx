@@ -266,106 +266,95 @@ export function ReviewView(): React.JSX.Element {
   const likeAlpha = Math.min(1, Math.max(0, (dx - 30) / 70))
   const nopeAlpha = Math.min(1, Math.max(0, (-dx - 30) / 70))
 
+  // 卡片尺寸：高度撑满面板，宽度按图片原始比例自适应
+  const cardAspectRatio =
+    currentItem?.width && currentItem?.height
+      ? `${currentItem.width} / ${currentItem.height}`
+      : undefined
+
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
-      {/* 当前卡片 — inset-4 撑满面板，key 保证换卡时重挂 */}
-      {currentItem && (
-        <div
-          key={currentItem.id}
-          ref={cardRef}
-          className="absolute inset-4 rounded-3xl overflow-hidden cursor-grab active:cursor-grabbing"
-          style={{
-            transform: `translateX(${cardDx}px) translateY(${cardDy}px) rotate(${rotate}deg)`,
-            transition: isFly
-              ? 'transform 0.22s ease-out, opacity 0.22s ease-out'
-              : drag
-                ? 'none'
-                : 'transform 0.2s ease-out',
-            opacity: isFly ? 0 : 1,
-            touchAction: 'none',
-            zIndex: 1
-          }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={() => {
-            startXRef.current = null
-            setDrag(null)
-          }}
-        >
-          {/* 喜欢 印章 — 粉色，广告体 */}
+      {/* 卡片居中容器 — overflow-hidden 裁剪飞出动画 */}
+      <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+        {currentItem && (
           <div
-            className="absolute top-8 left-8 z-10 font-black text-primary leading-none pointer-events-none"
+            key={currentItem.id}
+            ref={cardRef}
+            className="relative flex-shrink-0 rounded-3xl overflow-hidden cursor-grab active:cursor-grabbing"
             style={{
-              opacity: likeAlpha,
-              fontSize: '5rem',
-              transform: 'rotate(-14deg)',
-              textShadow: '0 2px 16px rgba(0,0,0,0.55)'
+              height: 'calc(100% - 32px)',
+              maxWidth: 'calc(100% - 32px)',
+              // 有尺寸数据则按比例；否则退到撑满宽度
+              ...(cardAspectRatio
+                ? { aspectRatio: cardAspectRatio }
+                : { width: 'calc(100% - 32px)' }),
+              transform: `translateX(${cardDx}px) translateY(${cardDy}px) rotate(${rotate}deg)`,
+              transition: isFly
+                ? 'transform 0.22s ease-out, opacity 0.22s ease-out'
+                : drag
+                  ? 'none'
+                  : 'transform 0.2s ease-out',
+              opacity: isFly ? 0 : 1,
+              touchAction: 'none'
+            }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={() => {
+              startXRef.current = null
+              setDrag(null)
             }}
           >
-            喜欢
-          </div>
-
-          {/* 不感兴趣 印章 — 亮灰，广告体 */}
-          <div
-            className="absolute top-8 right-8 z-10 font-black leading-none pointer-events-none"
-            style={{
-              opacity: nopeAlpha,
-              fontSize: '3rem',
-              color: 'rgba(220,220,220,0.92)',
-              transform: 'rotate(14deg)',
-              textShadow: '0 2px 16px rgba(0,0,0,0.55)'
-            }}
-          >
-            不感兴趣
-          </div>
-
-          {/* 媒体内容 */}
-          {currentItem.type === 'video' ? (
-            <video
-              src={`serendip://video/${currentItem.id}`}
-              autoPlay
-              muted
-              loop
-              playsInline
-              className="w-full h-full object-cover"
-              style={{ pointerEvents: 'none' }}
-            />
-          ) : (
-            <img
-              src={`serendip://thumb/${currentItem.id}`}
-              alt=""
-              className="w-full h-full object-cover"
-              draggable={false}
-              style={{ pointerEvents: 'none' }}
-            />
-          )}
-
-          {/* 分类胶囊覆层 — 渐变压底，多排自适应 */}
-          {categories.length > 0 && (
-            <div className="absolute bottom-0 left-0 right-0 z-10 bg-gradient-to-t from-black/75 via-black/35 to-transparent pt-16 pb-5 px-5">
-              <div className="flex flex-wrap gap-2">
-                {categories.map((cat) => (
-                  <button
-                    key={cat.id}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={() => void toggleCategory(cat.id)}
-                    disabled={isFly}
-                    className={clsx(
-                      'px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors',
-                      itemCategoryIds.has(cat.id)
-                        ? 'bg-primary text-white shadow-sm'
-                        : 'bg-white/15 text-white/80 hover:bg-white/28'
-                    )}
-                  >
-                    {cat.name}
-                  </button>
-                ))}
-              </div>
+            {/* 喜欢 印章 */}
+            <div
+              className="absolute top-8 left-8 z-10 font-black text-primary leading-none pointer-events-none"
+              style={{
+                opacity: likeAlpha,
+                fontSize: '5rem',
+                transform: 'rotate(-14deg)',
+                textShadow: '0 2px 16px rgba(0,0,0,0.55)'
+              }}
+            >
+              喜欢
             </div>
-          )}
-        </div>
-      )}
+
+            {/* 不感兴趣 印章 */}
+            <div
+              className="absolute top-8 right-8 z-10 font-black leading-none pointer-events-none"
+              style={{
+                opacity: nopeAlpha,
+                fontSize: '3rem',
+                color: 'rgba(220,220,220,0.92)',
+                transform: 'rotate(14deg)',
+                textShadow: '0 2px 16px rgba(0,0,0,0.55)'
+              }}
+            >
+              不感兴趣
+            </div>
+
+            {/* 媒体内容 */}
+            {currentItem.type === 'video' ? (
+              <video
+                src={`serendip://video/${currentItem.id}`}
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="w-full h-full object-cover"
+                style={{ pointerEvents: 'none' }}
+              />
+            ) : (
+              <img
+                src={`serendip://thumb/${currentItem.id}`}
+                alt=""
+                className="w-full h-full object-cover"
+                draggable={false}
+                style={{ pointerEvents: 'none' }}
+              />
+            )}
+          </div>
+        )}
+      </div>
 
       {/* 撤销 — 面板左上角 */}
       <button
@@ -386,6 +375,27 @@ export function ReviewView(): React.JSX.Element {
       >
         <SkipForward className="w-5 h-5" />
       </button>
+
+      {/* 分类胶囊 — 固定在面板底部，不随卡片移动 */}
+      {categories.length > 0 && currentItem && (
+        <div className="absolute bottom-0 left-0 right-0 z-20 px-5 pb-5 pt-3 flex flex-wrap gap-2">
+          {categories.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => void toggleCategory(cat.id)}
+              disabled={isFly}
+              className={clsx(
+                'px-3.5 py-1.5 rounded-full text-sm font-medium transition-colors backdrop-blur-md',
+                itemCategoryIds.has(cat.id)
+                  ? 'bg-primary text-white'
+                  : 'bg-black/30 text-white/85 hover:bg-black/45 border border-white/10'
+              )}
+            >
+              {cat.name}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
