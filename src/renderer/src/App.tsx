@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   DndContext,
   DragOverlay,
@@ -40,7 +41,10 @@ import {
   Plus,
   LayoutGrid,
   FolderInput,
-  Copy
+  Copy,
+  FolderOpen,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../main/categories'
@@ -97,6 +101,8 @@ function App(): React.JSX.Element {
   const { theme, toggleTheme, exploreMode, setExploreMode } = useUIStore()
   const gridSize = useUIStore((s) => s.gridSize)
   const cycleGridSize = useUIStore((s) => s.cycleGridSize)
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed)
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const {
     rootPath,
     isScanning,
@@ -329,61 +335,93 @@ function App(): React.JSX.Element {
     >
       <div className="flex min-h-screen bg-background text-foreground">
         {/* 左侧边栏 */}
-        <aside className="w-60 flex-shrink-0 flex flex-col border-r border-border bg-sidebar h-screen sticky top-0">
-          <div className="h-16 flex items-center px-5 border-b border-border">
-            <h1 className="text-xl font-bold text-primary">Serendip</h1>
+        <aside
+          className="flex-shrink-0 flex flex-col bg-sidebar h-screen sticky top-0 overflow-hidden transition-[width] duration-[250ms] ease-in-out"
+          style={{ width: sidebarCollapsed ? 70 : 240 }}
+        >
+          {/* 标题栏 + 折叠按钮 */}
+          <div className="h-16 flex items-center px-4 justify-between flex-shrink-0">
+            {!sidebarCollapsed && (
+              <h1 className="text-xl font-bold text-primary truncate">Serendip</h1>
+            )}
+            <button
+              onClick={toggleSidebar}
+              className={clsx(
+                'p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground flex-shrink-0',
+                sidebarCollapsed && 'mx-auto'
+              )}
+              title={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
+            >
+              {sidebarCollapsed ? (
+                <ChevronRight className="w-4 h-4" />
+              ) : (
+                <ChevronLeft className="w-4 h-4" />
+              )}
+            </button>
           </div>
 
-          <nav className="flex-1 py-4 overflow-y-auto">
+          <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">
             <NavItem
               icon={Compass}
               label="探索"
               active={view.kind === 'explore'}
+              collapsed={sidebarCollapsed}
               onClick={() => setView({ kind: 'explore' })}
             />
             <NavItem
               icon={Star}
               label="评审"
               active={view.kind === 'review'}
+              collapsed={sidebarCollapsed}
               onClick={() => setView({ kind: 'review' })}
             />
             <NavItem
               icon={Heart}
               label="喜欢"
               active={view.kind === 'liked'}
+              collapsed={sidebarCollapsed}
+              badge={!sidebarCollapsed && stats?.liked ? stats.liked : undefined}
               onClick={() => setView({ kind: 'liked' })}
             />
 
             <div className="mt-6">
-              <div className="px-5 flex items-center justify-between py-1.5 text-xs font-semibold text-muted-foreground">
-                <span>收藏分类</span>
-                <button
-                  className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-muted"
-                  title="新建分类"
-                  onClick={() => setShowCreate(true)}
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-              </div>
+              {!sidebarCollapsed && (
+                <div className="px-5 flex items-center justify-between py-2 text-xs font-semibold text-muted-foreground">
+                  <span>收藏分类</span>
+                  <button
+                    className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-muted"
+                    title="新建分类"
+                    onClick={() => setShowCreate(true)}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+              {sidebarCollapsed && (
+                <div className="flex justify-center py-1.5">
+                  <button
+                    className="p-1 hover:text-foreground text-muted-foreground hover:bg-muted rounded transition-colors"
+                    title="新建分类"
+                    onClick={() => setShowCreate(true)}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
 
               <CategoryList
                 activeDragType={dragType}
                 hoveredDropCategoryId={hoveredDropCategoryId}
+                collapsed={sidebarCollapsed}
                 onRename={(c) => setRenameTarget(c)}
                 onDelete={(c) => setDeleteTarget(c)}
               />
             </div>
           </nav>
 
-          <div className="border-t border-border p-3 space-y-2">
-            {stats && (
-              <div className="text-xs text-muted-foreground space-y-0.5 px-2">
-                <div>{stats.totalFiles.toLocaleString()} 个文件</div>
-                <div>{stats.totalFolders.toLocaleString()} 个文件夹</div>
-                <div>{stats.liked.toLocaleString()} 个喜欢</div>
-              </div>
-            )}
-            <div className="flex justify-end">
+          {/* 底部：仅主题切换 */}
+          <div className="p-3 flex-shrink-0">
+            <div className={clsx('flex', sidebarCollapsed ? 'justify-center' : 'justify-start')}>
               <button
                 onClick={toggleTheme}
                 className="p-2 rounded-lg hover:bg-muted transition-colors"
@@ -405,9 +443,10 @@ function App(): React.JSX.Element {
             <button
               onClick={handleSelectRoot}
               disabled={isScanning}
-              className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+              className="p-2 hover:opacity-60 transition-opacity disabled:opacity-30"
+              title={rootPath ? '更换根目录' : '选择根目录'}
             >
-              {rootPath ? '更换根目录' : '选择根目录'}
+              <FolderOpen className="w-5 h-5" />
             </button>
             {rootPath && (
               <>
@@ -452,7 +491,7 @@ function App(): React.JSX.Element {
             {rootPath && !isScanning && view.kind !== 'review' && (
               <button
                 onClick={cycleGridSize}
-                className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+                className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-2 py-1.5 text-sm transition-colors hover:text-primary"
                 title="切换缩略图大小"
               >
                 <LayoutGrid className="w-4 h-4" />
@@ -704,6 +743,9 @@ interface NavItemProps {
   icon: React.ElementType
   label: string
   active?: boolean
+  collapsed?: boolean
+  /** 展开态右侧数字徽章（折叠态不显示）*/
+  badge?: number
   onClick?: () => void
 }
 
@@ -711,19 +753,54 @@ function NavItem({
   icon: Icon,
   label,
   active,
+  collapsed,
+  badge,
   onClick
 }: NavItemProps): React.JSX.Element {
+  const [showTooltip, setShowTooltip] = useState(false)
+  const [tooltipY, setTooltipY] = useState(0)
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  const handleMouseEnter = (): void => {
+    if (!collapsed) return
+    const rect = btnRef.current?.getBoundingClientRect()
+    if (rect) setTooltipY(rect.top)
+    setShowTooltip(true)
+  }
+
   return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        'w-full flex items-center gap-3 px-5 py-2.5 text-sm font-medium transition-colors',
-        active ? 'text-primary bg-primary/10' : 'text-foreground hover:bg-muted'
+    <div className="relative">
+      <button
+        ref={btnRef}
+        onClick={onClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setShowTooltip(false)}
+        className={clsx(
+          'w-full flex items-center gap-3 py-3 text-sm font-medium transition-colors',
+          collapsed ? 'justify-center px-0' : 'px-5',
+          active ? 'text-primary' : 'text-foreground hover:bg-muted'
+        )}
+      >
+        <Icon className="w-5 h-5 flex-shrink-0" />
+        {!collapsed && <span className="truncate flex-1 text-left">{label}</span>}
+        {!collapsed && badge !== undefined && (
+          <span className="text-xs text-muted-foreground tabular-nums">{badge.toLocaleString()}</span>
+        )}
+      </button>
+
+      {/* 折叠态 tooltip — portal 到 body，绕开 aside overflow:hidden 的 stacking context */}
+      {collapsed && showTooltip && createPortal(
+        <div
+          className="fixed z-[200] pointer-events-none"
+          style={{ left: 78, top: tooltipY }}
+        >
+          <div className="bg-glass backdrop-blur-xl border border-border text-foreground text-xs px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
+            {label}
+          </div>
+        </div>,
+        document.body
       )}
-    >
-      <Icon className="w-5 h-5 flex-shrink-0" />
-      <span className="truncate">{label}</span>
-    </button>
+    </div>
   )
 }
 

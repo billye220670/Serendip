@@ -10,11 +10,13 @@ interface UIState {
   theme: Theme
   exploreMode: ExploreMode
   gridSize: GridSize
+  sidebarCollapsed: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setExploreMode: (mode: ExploreMode) => void
   /** 循环切换 小 → 中 → 大 → 小 */
   cycleGridSize: () => void
+  toggleSidebar: () => void
 }
 
 const GRID_ORDER: GridSize[] = ['small', 'medium', 'large']
@@ -25,6 +27,7 @@ export const useUIStore = create<UIState>()(
       theme: 'light',
       exploreMode: 'balanced',
       gridSize: 'medium',
+      sidebarCollapsed: false,
 
       setTheme: (theme) => {
         set({ theme })
@@ -44,6 +47,8 @@ export const useUIStore = create<UIState>()(
           const i = GRID_ORDER.indexOf(state.gridSize)
           return { gridSize: GRID_ORDER[(i + 1) % GRID_ORDER.length] }
         }),
+
+      toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
     }),
     {
       name: 'serendip-ui',

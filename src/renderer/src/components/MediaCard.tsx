@@ -315,8 +315,10 @@ export function MediaCard({
       {...dragAttributes}
       className={clsx(
         'relative group rounded-lg overflow-hidden bg-muted cursor-pointer w-full h-full select-none outline-none focus:outline-none focus-visible:outline-none',
+        'transition-[opacity,filter] duration-200',
         isDragHovering && 'opacity-50',
-        selected && 'ring-2 ring-primary ring-inset'
+        selected && 'ring-2 ring-primary ring-inset',
+        selectionActive && !selected && 'opacity-35 saturate-50'
       )}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}

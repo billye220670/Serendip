@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   SortableContext,
   useSortable,
@@ -17,6 +18,8 @@ interface CategoryListProps {
   activeDragType: 'category' | 'media' | null
   /** 拖到的分类 id（用于高亮投放目标） */
   hoveredDropCategoryId: number | null
+  /** 侧栏是否折叠（icon-only 模式） */
+  collapsed?: boolean
   onRename: (cat: Category) => void
   onDelete: (cat: Category) => void
 }
@@ -38,6 +41,7 @@ interface MenuState {
 export function CategoryList({
   activeDragType,
   hoveredDropCategoryId,
+  collapsed,
   onRename,
   onDelete
 }: CategoryListProps): React.JSX.Element {
@@ -66,8 +70,8 @@ export function CategoryList({
 
   if (categories.length === 0) {
     return (
-      <div className="px-5 py-3 text-xs text-muted-foreground italic">
-        还没有分类，点 + 新建一个
+      <div className={clsx('py-3 text-xs text-muted-foreground italic', collapsed ? 'px-2 text-center' : 'px-5')}>
+        {collapsed ? '…' : '还没有分类，点 + 新建一个'}
       </div>
     )
   }
@@ -80,6 +84,7 @@ export function CategoryList({
             <CategoryRow
               key={cat.id}
               category={cat}
+              collapsed={collapsed}
               isMediaHover={
                 activeDragType === 'media' && hoveredDropCategoryId === cat.id
               }
@@ -106,17 +111,22 @@ export function CategoryList({
 
 interface CategoryRowProps {
   category: Category
+  collapsed?: boolean
   isMediaHover: boolean
   onContextMenu: (e: React.MouseEvent) => void
 }
 
 function CategoryRow({
   category,
+  collapsed,
   isMediaHover,
   onContextMenu
 }: CategoryRowProps): React.JSX.Element {
   const view = useLibraryStore((s) => s.view)
   const setView = useLibraryStore((s) => s.setView)
+  const [showTooltip, setShowTooltip] = useState(false)
+  const [tooltipY, setTooltipY] = useState(0)
+  const btnRef = useRef<HTMLDivElement>(null)
 
   const {
     attributes,
@@ -138,31 +148,64 @@ function CategoryRow({
     opacity: isDragging ? 0.4 : 1
   }
 
+  const handleMouseEnter = (): void => {
+    if (!collapsed) return
+    const rect = btnRef.current?.getBoundingClientRect()
+    if (rect) setTooltipY(rect.top)
+    setShowTooltip(true)
+  }
+
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      {...listeners}
-      onClick={() => setView({ kind: 'category', id: category.id })}
-      onContextMenu={onContextMenu}
-      className={clsx(
-        'group flex items-center gap-2.5 px-5 py-2 text-sm cursor-pointer transition-colors',
-        isActive && 'text-primary bg-primary/10',
-        !isActive && !isMediaHover && 'text-foreground hover:bg-muted',
-        isMediaHover && 'ring-2 ring-primary ring-inset bg-primary/15'
-      )}
-    >
-      <Folder
+    <div className="relative">
+      <div
+        ref={(el) => {
+          setNodeRef(el)
+          ;(btnRef as React.MutableRefObject<HTMLDivElement | null>).current = el
+        }}
+        style={style}
+        {...attributes}
+        {...listeners}
+        onClick={() => setView({ kind: 'category', id: category.id })}
+        onContextMenu={onContextMenu}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setShowTooltip(false)}
         className={clsx(
-          'w-4 h-4 flex-shrink-0',
-          isActive ? 'text-primary' : 'text-muted-foreground'
+          'group flex items-center gap-2.5 py-3 text-sm cursor-pointer transition-colors',
+          collapsed ? 'justify-center px-0' : 'px-5',
+          isActive && 'text-primary',
+          !isActive && !isMediaHover && 'text-foreground hover:bg-muted',
+          isMediaHover && 'ring-2 ring-primary ring-inset bg-primary/15'
         )}
-      />
-      <span className="flex-1 truncate">{category.name}</span>
-      <span className="text-xs text-muted-foreground tabular-nums">
-        {category.itemCount}
-      </span>
+      >
+        <Folder
+          className={clsx(
+            'w-4 h-4 flex-shrink-0',
+            isActive ? 'text-primary' : 'text-muted-foreground'
+          )}
+        />
+        {!collapsed && (
+          <>
+            <span className="flex-1 truncate">{category.name}</span>
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {category.itemCount}
+            </span>
+          </>
+        )}
+      </div>
+
+      {/* 折叠态 tooltip — portal 到 body */}
+      {collapsed && showTooltip && createPortal(
+        <div
+          className="fixed z-[200] pointer-events-none"
+          style={{ left: 78, top: tooltipY }}
+        >
+          <div className="bg-glass backdrop-blur-xl border border-border text-foreground text-xs px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap flex items-center gap-2">
+            <span>{category.name}</span>
+            <span className="text-muted-foreground tabular-nums">{category.itemCount}</span>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
