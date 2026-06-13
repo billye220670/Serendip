@@ -80,11 +80,21 @@ body {
   background: var(--color-muted-foreground);
 }
 
-/* 评审卡片入场动画：用独立的 scale 属性，不干扰 transform（拖拽）*/
+/* 评审卡片入场动画
+ * - scale 与 aspect-ratio 同步插值，两者都是独立 CSS 属性，不干扰 transform（拖拽）
+ * - from: 与后方卡片同一比例(4/5) + 同一缩放(0.85)，to: 自然比例 + 全尺寸
+ * - aspect-ratio 的 to 值由元素内联样式决定，浏览器自动插值 */
 @keyframes card-enter {
-  from { scale: 0.85; opacity: 0.75; }
-  to   { scale: 1;    opacity: 1; }
+  from {
+    scale: 0.85;
+    aspect-ratio: 4 / 5;
+    opacity: 0.75;
+  }
+  to {
+    scale: 1;
+    opacity: 1;
+  }
 }
 .card-enter {
-  animation: card-enter 0.22s ease-out both;
+  animation: card-enter 0.32s ease-out both;
 }

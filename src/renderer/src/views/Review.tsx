@@ -267,19 +267,23 @@ export function ReviewView(): React.JSX.Element {
   const likeAlpha = Math.min(1, Math.max(0, (dx - 30) / 70))
   const nopeAlpha = Math.min(1, Math.max(0, (-dx - 30) / 70))
 
+  // 当前卡片的自然比例（无数据时退到固定卡片比例，入场无比例动画）
+  const naturalRatio =
+    currentItem?.width && currentItem?.height
+      ? `${currentItem.width} / ${currentItem.height}`
+      : '4 / 5'
+
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
-      {/* 层 0 — 下一张卡
-          与当前卡同一套尺寸公式，用 scale(0.85) 缩小；
-          overflow-hidden 防止宽幅横图溢出；
-          入场动画也从 scale(0.85) 起，两者无跳变 */}
+      {/* 层 0 — 下一张：固定 4/5 卡片比例，scale(0.85)，图片 object-fit:cover */}
       <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 0 }}>
         {nextItem && (
           <div
             className="flex-shrink-0 rounded-3xl overflow-hidden"
             style={{
-              width: 'calc(100vw - 320px)',
               height: 'calc(100vh - 160px)',
+              aspectRatio: '4 / 5',
+              maxWidth: 'calc(100vw - 320px)',
               transform: 'scale(0.85) translateY(8px)',
               opacity: 0.75
             }}
@@ -301,7 +305,8 @@ export function ReviewView(): React.JSX.Element {
         )}
       </div>
 
-      {/* 层 1 — 当前卡（overflow-hidden 裁剪飞出动画） */}
+      {/* 层 1 — 当前卡：内联 aspectRatio 设为自然比例，
+          card-enter 从 4/5 插值到此，scale 0.85→1 同步，图片 object-fit:cover 自适应 */}
       <div
         className="absolute inset-0 flex items-center justify-center overflow-hidden"
         style={{ zIndex: 1 }}
@@ -312,6 +317,9 @@ export function ReviewView(): React.JSX.Element {
             ref={cardRef}
             className="card-enter relative flex-shrink-0 rounded-3xl overflow-hidden cursor-grab active:cursor-grabbing"
             style={{
+              height: 'calc(100vh - 160px)',
+              aspectRatio: naturalRatio,
+              maxWidth: 'calc(100vw - 320px)',
               transform: `translateX(${cardDx}px) translateY(${cardDy}px) rotate(${rotate}deg)`,
               transition: isFly
                 ? 'transform 0.22s ease-out, opacity 0.22s ease-out'
@@ -365,9 +373,9 @@ export function ReviewView(): React.JSX.Element {
                 playsInline
                 style={{
                   display: 'block',
-                  height: 'calc(100vh - 160px)',
-                  width: 'auto',
-                  maxWidth: 'calc(100vw - 320px)',
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
                   pointerEvents: 'none'
                 }}
               />
@@ -378,9 +386,9 @@ export function ReviewView(): React.JSX.Element {
                 draggable={false}
                 style={{
                   display: 'block',
-                  height: 'calc(100vh - 160px)',
-                  width: 'auto',
-                  maxWidth: 'calc(100vw - 320px)',
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'cover',
                   pointerEvents: 'none',
                   userSelect: 'none'
                 }}
@@ -390,7 +398,7 @@ export function ReviewView(): React.JSX.Element {
         )}
       </div>
 
-      {/* 撤销 — 左上角，大按钮，深色底 */}
+      {/* 撤销 — 左上角 */}
       <button
         className="absolute top-8 left-8 z-20 p-3 rounded-full bg-black/50 text-white hover:bg-black/65 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
         onClick={() => void doUndo()}
@@ -400,7 +408,7 @@ export function ReviewView(): React.JSX.Element {
         <Undo2 className="w-6 h-6" />
       </button>
 
-      {/* 跳过 — 右上角，与撤销同高 */}
+      {/* 跳过 — 右上角 */}
       <button
         className="absolute top-8 right-8 z-20 p-3 rounded-full bg-black/50 text-white hover:bg-black/65 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
         onClick={() => void doSkip()}
@@ -410,7 +418,7 @@ export function ReviewView(): React.JSX.Element {
         <SkipForward className="w-6 h-6" />
       </button>
 
-      {/* 分类胶囊 — 固定面板底部，大号，深色，多缩进 */}
+      {/* 分类胶囊 — 固定面板底部 */}
       {categories.length > 0 && currentItem && (
         <div className="absolute bottom-0 left-0 right-0 z-20 px-8 pb-8 pt-4 flex flex-wrap gap-2.5">
           {categories.map((cat) => (
