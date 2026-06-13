@@ -10,7 +10,7 @@ type UndoAction =
   | { item: MediaItem; action: 'dislike' }
   | { item: MediaItem; action: 'skip' }
 
-const THRESHOLD_X = 100
+const THRESHOLD_X = 160
 const BUFFER_FILL = 10
 const LOW_WATER = 4
 
