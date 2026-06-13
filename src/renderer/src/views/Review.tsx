@@ -28,6 +28,7 @@ export function ReviewView(): React.JSX.Element {
   const [drag, setDrag] = useState<{ dx: number } | null>(null)
   const [flyState, setFlyState] = useState<{ dx: number; dy: number } | null>(null)
   const [itemCategoryIds, setItemCategoryIds] = useState<Set<number>>(new Set())
+  const [punchLabel, setPunchLabel] = useState<'like' | 'dislike' | null>(null)
 
   const undoStackRef = useRef<UndoAction[]>([])
   const seenIdsRef = useRef(new Set<number>())
@@ -35,6 +36,7 @@ export function ReviewView(): React.JSX.Element {
   const flyingRef = useRef(false)
   const startXRef = useRef<number | null>(null)
   const cardRef = useRef<HTMLDivElement>(null)
+  const punchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // rootPath 变更时重置所有评审状态
   useEffect(() => {
@@ -49,7 +51,14 @@ export function ReviewView(): React.JSX.Element {
     setDrag(null)
     setFlyState(null)
     setItemCategoryIds(new Set())
+    setPunchLabel(null)
   }, [rootPath])
+
+  useEffect(() => {
+    return () => {
+      if (punchTimerRef.current) clearTimeout(punchTimerRef.current)
+    }
+  }, [])
 
   // 同步进度到顶部标题栏，卸载时清空
   useEffect(() => {
@@ -117,6 +126,14 @@ export function ReviewView(): React.JSX.Element {
     ) => {
       if (flyingRef.current) return
       flyingRef.current = true
+
+      // 喜欢/不感兴趣：触发面板标题 punch 反馈
+      if (entry.action === 'like' || entry.action === 'dislike') {
+        if (punchTimerRef.current) clearTimeout(punchTimerRef.current)
+        setPunchLabel(entry.action)
+        punchTimerRef.current = setTimeout(() => setPunchLabel(null), 380)
+      }
+
       const targets = {
         right: { dx: 700, dy: -60 },
         left: { dx: -700, dy: -60 }
@@ -344,33 +361,6 @@ export function ReviewView(): React.JSX.Element {
               setDrag(null)
             }}
           >
-            {/* 喜欢 印章 */}
-            <div
-              className="absolute top-8 left-8 z-10 font-black text-primary leading-none pointer-events-none"
-              style={{
-                opacity: likeAlpha,
-                fontSize: '5rem',
-                transform: 'rotate(-14deg)',
-                textShadow: '0 2px 16px rgba(0,0,0,0.55)'
-              }}
-            >
-              喜欢
-            </div>
-
-            {/* 不感兴趣 印章 */}
-            <div
-              className="absolute top-8 right-8 z-10 font-black leading-none pointer-events-none"
-              style={{
-                opacity: nopeAlpha,
-                fontSize: '3rem',
-                color: 'rgba(220,220,220,0.92)',
-                transform: 'rotate(14deg)',
-                textShadow: '0 2px 16px rgba(0,0,0,0.55)'
-              }}
-            >
-              不感兴趣
-            </div>
-
             {currentItem.type === 'video' ? (
               <video
                 src={`serendip://video/${currentItem.id}`}
@@ -403,6 +393,49 @@ export function ReviewView(): React.JSX.Element {
             )}
           </div>
         )}
+      </div>
+
+      {/* 喜欢 — 面板右侧固定，拖拽右滑时渐显+放大，确认后 punch 反馈 */}
+      <div
+        className={clsx(
+          'absolute z-30 pointer-events-none font-black leading-none text-primary',
+          punchLabel === 'like' && 'review-label-punch'
+        )}
+        style={{
+          right: '10%',
+          top: '50%',
+          transform:
+            punchLabel === 'like'
+              ? 'translateY(-50%)'
+              : `translateY(-50%) scale(${1 + likeAlpha * 0.35})`,
+          opacity: punchLabel === 'like' ? undefined : likeAlpha,
+          fontSize: '5rem',
+          textShadow: '0 2px 24px rgba(0,0,0,0.75)'
+        }}
+      >
+        喜欢
+      </div>
+
+      {/* 不感兴趣 — 面板左侧固定 */}
+      <div
+        className={clsx(
+          'absolute z-30 pointer-events-none font-black leading-none',
+          punchLabel === 'dislike' && 'review-label-punch'
+        )}
+        style={{
+          left: '10%',
+          top: '50%',
+          transform:
+            punchLabel === 'dislike'
+              ? 'translateY(-50%)'
+              : `translateY(-50%) scale(${1 + nopeAlpha * 0.35})`,
+          opacity: punchLabel === 'dislike' ? undefined : nopeAlpha,
+          fontSize: '3rem',
+          color: 'rgba(220,220,220,0.92)',
+          textShadow: '0 2px 24px rgba(0,0,0,0.75)'
+        }}
+      >
+        不感兴趣
       </div>
 
       {/* 撤销 — 左上角 */}
