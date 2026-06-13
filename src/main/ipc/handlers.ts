@@ -16,6 +16,7 @@ import {
   removeItemsFromCategory,
   getFileCategoryIds
 } from '../categories'
+import { startWatcher } from '../watcher'
 
 export function registerIpcHandlers(): void {
   // 选择根目录
@@ -34,7 +35,9 @@ export function registerIpcHandlers(): void {
     const onProgress = (progress: ScanProgress): void => {
       sender.send(IPC.SCAN_PROGRESS, progress)
     }
-    return await scanRoot(rootPath, onProgress)
+    const result = await scanRoot(rootPath, onProgress)
+    startWatcher(rootPath)
+    return result
   })
 
   // 获取当前根目录

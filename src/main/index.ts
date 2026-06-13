@@ -5,6 +5,8 @@ import icon from '../../resources/icon.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
 import { getDatabase, closeDatabase } from './db'
 import { registerThumbProtocol } from './thumbnailer/protocol'
+import { scanRoot } from './scanner'
+import { startWatcher, stopWatcher } from './watcher'
 
 // 必须在 app.whenReady 之前注册协议特权
 protocol.registerSchemesAsPrivileged([
@@ -51,21 +53,32 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.serendip')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // 初始化数据库
-  getDatabase()
-
-  // 注册自定义协议
+  const db = getDatabase()
   registerThumbProtocol()
-
-  // 注册 IPC 处理器
   registerIpcHandlers()
+
+  // 启动时增量同步：静默扫描（不推送进度），完成后启动监听器
+  const rootRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('rootPath') as
+    | { value: string }
+    | undefined
+
+  if (rootRow?.value) {
+    console.log('[Startup] Auto-syncing root:', rootRow.value)
+    try {
+      await scanRoot(rootRow.value)
+      console.log('[Startup] Sync complete, starting file watcher')
+      startWatcher(rootRow.value)
+    } catch (err) {
+      console.error('[Startup] Sync failed:', err)
+    }
+  }
 
   createWindow()
 
@@ -75,6 +88,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  stopWatcher()
   closeDatabase()
   if (process.platform !== 'darwin') {
     app.quit()
