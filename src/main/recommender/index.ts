@@ -31,6 +31,8 @@ interface RecommendOptions {
   count: number
   mode: ExploreMode
   excludeIds?: Set<number>
+  /** 仅返回 liked=0 AND disliked=0 的未评级文件（评审模式专用） */
+  onlyUnrated?: boolean
 }
 
 interface FolderWeight {
@@ -43,7 +45,7 @@ interface FolderWeight {
  * 抽取一批推荐内容
  */
 export function recommend(options: RecommendOptions): MediaItem[] {
-  const { count, mode, excludeIds = new Set() } = options
+  const { count, mode, excludeIds = new Set(), onlyUnrated = false } = options
   const db = getDatabase()
 
   // 模式参数
@@ -56,16 +58,19 @@ export function recommend(options: RecommendOptions): MediaItem[] {
   if (!rootRow) return []
   const rootPrefix = escapeLike(rootRow.value)
 
+  const unratedFilter = onlyUnrated ? ' AND liked = 0' : ''
+
   // 1) 取出所有文件夹及其权重（排除完全只有 disliked / unavailable 的文件夹）
   const folders = db.prepare(`
     SELECT
       folder_path as path,
       COUNT(*) as file_count,
-      SUM(CASE WHEN disliked = 0 AND unavailable = 0 THEN 1 ELSE 0 END) as available_count,
+      SUM(CASE WHEN disliked = 0 AND unavailable = 0${unratedFilter} THEN 1 ELSE 0 END) as available_count,
       MAX(IFNULL(last_shown_at, 0)) as last_shown_at
     FROM media_files
     WHERE disliked = 0
       AND unavailable = 0
+      ${unratedFilter}
       AND path LIKE ? ESCAPE '\\'
     GROUP BY folder_path
     HAVING available_count > 0
@@ -105,7 +110,7 @@ export function recommend(options: RecommendOptions): MediaItem[] {
     if (!folder) break
 
     // 在该文件夹内挑一个文件
-    const file = pickFileInFolder(db, folder.path, mode, excludeIds, seenInThisBatch)
+    const file = pickFileInFolder(db, folder.path, mode, excludeIds, seenInThisBatch, onlyUnrated)
     if (!file) continue
 
     results.push(file)
@@ -166,16 +171,18 @@ function pickFileInFolder(
   folderPath: string,
   mode: ExploreMode,
   excludeIds: Set<number>,
-  seenInBatch: Set<number>
+  seenInBatch: Set<number>,
+  onlyUnrated: boolean
 ): MediaItem | null {
   const params = getModeParams(mode)
+  const unratedFilter = onlyUnrated ? ' AND liked = 0' : ''
   // 读出文件夹下所有可用文件（不含 disliked / unavailable）
   const files = db.prepare(`
     SELECT id, path, folder_path, type, width, height, duration_ms, liked, disliked,
            IFNULL(last_shown_at, 0) as last_shown_at,
            shown_count
     FROM media_files
-    WHERE folder_path = ? AND disliked = 0 AND unavailable = 0
+    WHERE folder_path = ? AND disliked = 0 AND unavailable = 0${unratedFilter}
   `).all(folderPath) as Array<MediaItem & { last_shown_at: number; shown_count: number }>
 
   const available = files.filter(

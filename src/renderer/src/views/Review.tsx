@@ -68,7 +68,7 @@ export function ReviewView(): React.JSX.Element {
     loadingRef.current = true
     setLoading(true)
     try {
-      const batch = await window.api.getRecommendations(BUFFER_FILL, 'balanced')
+      const batch = await window.api.getRecommendations(BUFFER_FILL, 'balanced', true)
       const fresh = batch.filter((it) => it && !seenIdsRef.current.has(it.id))
       fresh.forEach((f) => seenIdsRef.current.add(f.id))
       if (fresh.length === 0) {

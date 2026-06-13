@@ -15,7 +15,7 @@ export interface SerendipAPI {
   getStats(): Promise<{ totalFiles: number; totalFolders: number; liked: number }>
 
   // ===== 推荐与浏览 =====
-  getRecommendations(count: number, mode: ExploreMode): Promise<MediaItem[]>
+  getRecommendations(count: number, mode: ExploreMode, onlyUnrated?: boolean): Promise<MediaItem[]>
   setLiked(fileId: number, liked: boolean): Promise<void>
   setDisliked(fileId: number, disliked: boolean): Promise<void>
   /** 批量设置喜欢（多选模式） */
