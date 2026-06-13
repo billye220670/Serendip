@@ -269,12 +269,20 @@ export function ReviewView(): React.JSX.Element {
 
   return (
     <div className="relative h-full w-full select-none overflow-hidden">
-      {/* 层 0 — 下一张卡（固定宽度，比例自适应高度，统一大小防止堆叠混乱） */}
+      {/* 层 0 — 下一张卡
+          与当前卡同一套尺寸公式，用 scale(0.85) 缩小；
+          overflow-hidden 防止宽幅横图溢出；
+          入场动画也从 scale(0.85) 起，两者无跳变 */}
       <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 0 }}>
         {nextItem && (
           <div
             className="flex-shrink-0 rounded-3xl overflow-hidden"
-            style={{ transform: 'scale(0.95) translateY(6px)', opacity: 0.75 }}
+            style={{
+              width: 'calc(100vw - 320px)',
+              height: 'calc(100vh - 160px)',
+              transform: 'scale(0.85) translateY(8px)',
+              opacity: 0.75
+            }}
           >
             <img
               src={`serendip://thumb/${nextItem.id}`}
@@ -282,9 +290,9 @@ export function ReviewView(): React.JSX.Element {
               draggable={false}
               style={{
                 display: 'block',
-                width: '720px',
-                height: 'auto',
-                maxWidth: 'calc(100vw - 320px)',
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
                 pointerEvents: 'none',
                 userSelect: 'none'
               }}
