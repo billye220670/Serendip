@@ -85,6 +85,13 @@ export function ReviewView(): React.JSX.Element {
   const currentItem = queue[0] ?? null
   const nextItem = queue[1] ?? null
 
+  // layer 0 用滞后一个 tick 的 nextItem，使 advance() 后第一帧两层都能显示 B，
+  // 消除 B 从 layer0 移除 → layer1 挂载之间的空帧闪烁
+  const [displayedNextItem, setDisplayedNextItem] = useState<MediaItem | null>(null)
+  useEffect(() => {
+    setDisplayedNextItem(nextItem)
+  }, [nextItem?.id])
+
   // 当前卡片变更时，加载其分类归属
   useEffect(() => {
     if (!currentItem) { setItemCategoryIds(new Set()); return }
@@ -277,7 +284,7 @@ export function ReviewView(): React.JSX.Element {
     <div className="relative h-full w-full select-none overflow-hidden">
       {/* 层 0 — 下一张：固定 4/5 卡片比例，scale(0.85)，图片 object-fit:cover */}
       <div className="absolute inset-0 flex items-center justify-center" style={{ zIndex: 0 }}>
-        {nextItem && (
+        {displayedNextItem && (
           <div
             className="flex-shrink-0 rounded-3xl overflow-hidden"
             style={{
@@ -289,7 +296,7 @@ export function ReviewView(): React.JSX.Element {
             }}
           >
             <img
-              src={`serendip://thumb/${nextItem.id}`}
+              src={`serendip://thumb/${displayedNextItem.id}`}
               alt=""
               draggable={false}
               style={{
