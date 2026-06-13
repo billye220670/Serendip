@@ -21,6 +21,7 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.SET_LIKED_BATCH, fileIds, liked),
   setDislikedBatch: (fileIds: number[], disliked: boolean) =>
     ipcRenderer.invoke(IPC.SET_DISLIKED_BATCH, fileIds, disliked),
+  listLiked: () => ipcRenderer.invoke(IPC.LIST_LIKED),
   markUnavailable: (fileId: number, reason: string) =>
     ipcRenderer.invoke(IPC.MARK_UNAVAILABLE, fileId, reason),
   revealInFolder: (fileId: number) => ipcRenderer.invoke(IPC.REVEAL_IN_FOLDER, fileId),

@@ -22,6 +22,7 @@ import { useSelectionStore } from './stores/selection'
 import { ExploreView } from './views/Explore'
 import { CategoryView } from './views/CategoryView'
 import { ReviewView } from './views/Review'
+import { LikedView } from './views/LikedView'
 import { CategoryList } from './components/CategoryList'
 import { PromptDialog } from './components/PromptDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
@@ -346,7 +347,12 @@ function App(): React.JSX.Element {
               active={view.kind === 'review'}
               onClick={() => setView({ kind: 'review' })}
             />
-            <NavItem icon={Heart} label="喜欢" />
+            <NavItem
+              icon={Heart}
+              label="喜欢"
+              active={view.kind === 'liked'}
+              onClick={() => setView({ kind: 'liked' })}
+            />
 
             <div className="mt-6">
               <div className="px-5 flex items-center justify-between py-1.5 text-xs font-semibold text-muted-foreground">
@@ -474,6 +480,8 @@ function App(): React.JSX.Element {
               <EmptyState onSelect={handleSelectRoot} />
             ) : view.kind === 'review' ? (
               <ReviewView />
+            ) : view.kind === 'liked' ? (
+              <LikedView />
             ) : view.kind === 'category' ? (
               <CategoryView key={view.id} categoryId={view.id} />
             ) : (

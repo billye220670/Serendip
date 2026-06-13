@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import {
   Heart,
+  HeartOff,
   EyeOff,
   FolderPlus,
   Trash2,
@@ -30,6 +31,8 @@ interface SelectionToolbarProps {
   categories: Category[]
   /** 批量喜欢 */
   onLike?: () => void
+  /** 批量取消喜欢（喜欢视图） */
+  onUnlike?: () => void
   /** 批量不感兴趣（探索视图） */
   onDislike?: () => void
   /** 批量加入分类 */
@@ -57,6 +60,7 @@ export function SelectionToolbar({
   onDeselectAll,
   categories,
   onLike,
+  onUnlike,
   onDislike,
   onAddToCategory,
   onRemoveFromCategory
@@ -99,6 +103,14 @@ export function SelectionToolbar({
       )}
       {onLike && (
         <ToolbarButton icon={Heart} label="喜欢" disabled={!hasSelection} onClick={onLike} />
+      )}
+      {onUnlike && (
+        <ToolbarButton
+          icon={HeartOff}
+          label="取消喜欢"
+          disabled={!hasSelection}
+          onClick={onUnlike}
+        />
       )}
       {onDislike && (
         <ToolbarButton

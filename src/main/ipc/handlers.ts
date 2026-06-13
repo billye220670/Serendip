@@ -100,6 +100,27 @@ export function registerIpcHandlers(): void {
     txn(fileIds)
   })
 
+  // 列出所有 liked 文件（限定在 rootPath 下、未失效）
+  ipcMain.handle(IPC.LIST_LIKED, () => {
+    const db = getDatabase()
+    const rootRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('rootPath') as
+      | { value: string }
+      | undefined
+    if (!rootRow) return []
+    // 转义 LIKE 中的反斜杠 / % / _（Windows 路径含 `\`，与默认转义符冲突）
+    const rootPrefix = rootRow.value.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+    return db
+      .prepare(
+        `SELECT id, path, folder_path, type, width, height, duration_ms, liked, disliked
+         FROM media_files
+         WHERE liked = 1
+           AND unavailable = 0
+           AND path LIKE ? ESCAPE '\\'
+         ORDER BY id DESC`
+      )
+      .all(rootPrefix + '%')
+  })
+
   // 标记文件失效（缩略图生成失败 / 文件已删除 / 损坏）
   ipcMain.handle(IPC.MARK_UNAVAILABLE, (_event, fileId: number, reason: string) => {
     const db = getDatabase()

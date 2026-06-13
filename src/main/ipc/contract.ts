@@ -22,6 +22,8 @@ export interface SerendipAPI {
   setLikedBatch(fileIds: number[], liked: boolean): Promise<void>
   /** 批量设置不感兴趣（多选模式） */
   setDislikedBatch(fileIds: number[], disliked: boolean): Promise<void>
+  /** 列出所有 liked=1 且未失效的文件（喜欢视图使用，按 id 倒序 ≈ 最近入库优先） */
+  listLiked(): Promise<MediaItem[]>
   markUnavailable(fileId: number, reason: string): Promise<void>
   revealInFolder(fileId: number): Promise<void>
 
@@ -62,6 +64,7 @@ export const IPC = {
   SET_DISLIKED: 'serendip:setDisliked',
   SET_LIKED_BATCH: 'serendip:setLikedBatch',
   SET_DISLIKED_BATCH: 'serendip:setDislikedBatch',
+  LIST_LIKED: 'serendip:listLiked',
   MARK_UNAVAILABLE: 'serendip:markUnavailable',
   REVEAL_IN_FOLDER: 'serendip:revealInFolder',
   LIST_CATEGORIES: 'serendip:listCategories',

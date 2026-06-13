@@ -14,6 +14,7 @@ interface ScanProgress {
 export type View =
   | { kind: 'explore' }
   | { kind: 'review' }
+  | { kind: 'liked' }
   | { kind: 'category'; id: number }
 
 interface LibraryState {
