@@ -17,6 +17,10 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.SET_LIKED, fileId, liked),
   setDisliked: (fileId: number, disliked: boolean) =>
     ipcRenderer.invoke(IPC.SET_DISLIKED, fileId, disliked),
+  setLikedBatch: (fileIds: number[], liked: boolean) =>
+    ipcRenderer.invoke(IPC.SET_LIKED_BATCH, fileIds, liked),
+  setDislikedBatch: (fileIds: number[], disliked: boolean) =>
+    ipcRenderer.invoke(IPC.SET_DISLIKED_BATCH, fileIds, disliked),
   markUnavailable: (fileId: number, reason: string) =>
     ipcRenderer.invoke(IPC.MARK_UNAVAILABLE, fileId, reason),
   revealInFolder: (fileId: number) => ipcRenderer.invoke(IPC.REVEAL_IN_FOLDER, fileId),
@@ -34,6 +38,8 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.ADD_ITEMS_TO_CATEGORY, categoryId, fileIds),
   removeItemFromCategory: (categoryId: number, fileId: number) =>
     ipcRenderer.invoke(IPC.REMOVE_ITEM_FROM_CATEGORY, categoryId, fileId),
+  removeItemsFromCategory: (categoryId: number, fileIds: number[]) =>
+    ipcRenderer.invoke(IPC.REMOVE_ITEMS_FROM_CATEGORY, categoryId, fileIds),
 
   onScanProgress: (callback: (progress: ScanProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => {

@@ -18,6 +18,10 @@ export interface SerendipAPI {
   getRecommendations(count: number, mode: ExploreMode): Promise<MediaItem[]>
   setLiked(fileId: number, liked: boolean): Promise<void>
   setDisliked(fileId: number, disliked: boolean): Promise<void>
+  /** 批量设置喜欢（多选模式） */
+  setLikedBatch(fileIds: number[], liked: boolean): Promise<void>
+  /** 批量设置不感兴趣（多选模式） */
+  setDislikedBatch(fileIds: number[], disliked: boolean): Promise<void>
   markUnavailable(fileId: number, reason: string): Promise<void>
   revealInFolder(fileId: number): Promise<void>
 
@@ -30,6 +34,8 @@ export interface SerendipAPI {
   getCategoryItems(categoryId: number): Promise<MediaItem[]>
   addItemsToCategory(categoryId: number, fileIds: number[]): Promise<number>
   removeItemFromCategory(categoryId: number, fileId: number): Promise<void>
+  /** 批量从分类移除（多选模式） */
+  removeItemsFromCategory(categoryId: number, fileIds: number[]): Promise<void>
 
   // ===== 进度订阅 =====
   onScanProgress(callback: (progress: ScanProgress) => void): () => void
@@ -52,6 +58,8 @@ export const IPC = {
   GET_RECOMMENDATIONS: 'serendip:getRecommendations',
   SET_LIKED: 'serendip:setLiked',
   SET_DISLIKED: 'serendip:setDisliked',
+  SET_LIKED_BATCH: 'serendip:setLikedBatch',
+  SET_DISLIKED_BATCH: 'serendip:setDislikedBatch',
   MARK_UNAVAILABLE: 'serendip:markUnavailable',
   REVEAL_IN_FOLDER: 'serendip:revealInFolder',
   LIST_CATEGORIES: 'serendip:listCategories',
@@ -61,5 +69,6 @@ export const IPC = {
   REORDER_CATEGORIES: 'serendip:reorderCategories',
   GET_CATEGORY_ITEMS: 'serendip:getCategoryItems',
   ADD_ITEMS_TO_CATEGORY: 'serendip:addItemsToCategory',
-  REMOVE_ITEM_FROM_CATEGORY: 'serendip:removeItemFromCategory'
+  REMOVE_ITEM_FROM_CATEGORY: 'serendip:removeItemFromCategory',
+  REMOVE_ITEMS_FROM_CATEGORY: 'serendip:removeItemsFromCategory'
 } as const

@@ -5,8 +5,12 @@ import { Loader2, FolderOpen, Heart, HeartOff, Trash2 } from 'lucide-react'
 import { MediaCard } from '../components/MediaCard'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { SelectionToolbar } from '../components/SelectionToolbar'
 import { useCategoriesStore } from '../stores/categories'
 import { useLibraryStore } from '../stores/library'
+import { useUIStore } from '../stores/ui'
+import { useGridSelection } from '../stores/selection'
+import { getColumns } from '../lib/grid'
 import type { MediaItem } from '../../../main/recommender'
 
 interface MediaPhoto {
@@ -38,7 +42,11 @@ interface Props {
 export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const categories = useCategoriesStore((s) => s.categories)
   const removeItem = useCategoriesStore((s) => s.removeItem)
+  const removeItems = useCategoriesStore((s) => s.removeItems)
+  const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const view = useLibraryStore((s) => s.view)
+  const categoryRefreshNonce = useLibraryStore((s) => s.categoryRefreshNonce)
+  const gridSize = useUIStore((s) => s.gridSize)
 
   const category = useMemo(
     () => categories.find((c) => c.id === categoryId),
@@ -49,6 +57,22 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const [loading, setLoading] = useState(true)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<MediaItem | null>(null)
+  const [confirmBatchRemove, setConfirmBatchRemove] = useState(false)
+
+  // 多选（阶段 5）
+  const {
+    selectedCount,
+    selectionActive,
+    handleSelectClick,
+    handleLongPress,
+    handleSelectAll,
+    getSelectedIds,
+    deselectAll,
+    clear: clearSelection
+  } = useGridSelection(items)
+
+  // 离开 / 切换分类时清空选择
+  useEffect(() => () => clearSelection(), [clearSelection])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -64,14 +88,15 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
 
   useEffect(() => {
     void load()
-  }, [load])
+    // categoryRefreshNonce 变化时重载（跨视图"移动到此"后当前分类需刷新）
+  }, [load, categoryRefreshNonce])
 
   // 视图本身切到别的分类时，关闭弹窗，避免遗留
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMenu(null)
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setConfirmRemove(null)
+    setConfirmBatchRemove(false)
   }, [view])
 
   const handleLikeToggle = useCallback(async (id: number, liked: boolean) => {
@@ -122,6 +147,49 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     },
     [categoryId, removeItem, load]
   )
+
+  // ===== 批量操作（多选工具条） =====
+
+  const handleBatchLike = useCallback(async () => {
+    const ids = getSelectedIds()
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    setItems((prev) => prev.map((it) => (idSet.has(it.id) ? { ...it, liked: 1 } : it)))
+    deselectAll()
+    try {
+      await window.api.setLikedBatch(ids, true)
+    } catch (err) {
+      console.error('setLikedBatch failed:', err)
+    }
+  }, [getSelectedIds, deselectAll])
+
+  const handleBatchAddToCategory = useCallback(
+    async (targetCategoryId: number) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      deselectAll()
+      try {
+        await addItemsToCategory(targetCategoryId, ids)
+      } catch (err) {
+        console.error('addItemsToCategory failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, addItemsToCategory]
+  )
+
+  const performBatchRemove = useCallback(async () => {
+    const ids = getSelectedIds()
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    deselectAll()
+    setItems((prev) => prev.filter((it) => !idSet.has(it.id)))
+    try {
+      await removeItems(categoryId, ids)
+    } catch (err) {
+      console.error('removeItemsFromCategory failed:', err)
+      await load()
+    }
+  }, [getSelectedIds, deselectAll, removeItems, categoryId, load])
 
   const photos: MediaPhoto[] = items.map((item) => ({
     key: String(item.id),
@@ -175,13 +243,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
       ) : (
         <MasonryPhotoAlbum
           photos={photos}
-          columns={(containerWidth) => {
-            if (containerWidth < 600) return 2
-            if (containerWidth < 900) return 3
-            if (containerWidth < 1200) return 4
-            if (containerWidth < 1600) return 5
-            return 6
-          }}
+          columns={(containerWidth) => getColumns(containerWidth, gridSize)}
           spacing={12}
           render={{
             photo: (_props, { photo, width, height }) => (
@@ -191,6 +253,8 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
                   onLikeToggle={handleLikeToggle}
                   onContextMenu={handleContextMenu}
                   onThumbError={handleThumbError}
+                  onSelectClick={handleSelectClick}
+                  onLongPress={handleLongPress}
                 />
               </div>
             )
@@ -222,6 +286,42 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
             void performRemove(it)
           }}
           onCancel={() => setConfirmRemove(null)}
+        />
+      )}
+
+      <SelectionToolbar
+        active={selectionActive}
+        count={selectedCount}
+        totalCount={items.length}
+        onClear={clearSelection}
+        onSelectAll={handleSelectAll}
+        onDeselectAll={deselectAll}
+        categories={categories}
+        onLike={handleBatchLike}
+        onAddToCategory={handleBatchAddToCategory}
+        onRemoveFromCategory={() => setConfirmBatchRemove(true)}
+      />
+
+      {confirmBatchRemove && (
+        <ConfirmDialog
+          title="从分类移除"
+          message={
+            <>
+              确定要将选中的 <strong>{selectedCount}</strong> 项从「
+              <strong>{category?.name ?? ''}</strong>」中移除吗？
+              <br />
+              <span className="text-xs text-muted-foreground">
+                只是移除关联，不会删除原始文件。
+              </span>
+            </>
+          }
+          confirmLabel="移除"
+          danger
+          onConfirm={() => {
+            setConfirmBatchRemove(false)
+            void performBatchRemove()
+          }}
+          onCancel={() => setConfirmBatchRemove(false)}
         />
       )}
     </div>

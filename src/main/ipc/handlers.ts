@@ -12,7 +12,8 @@ import {
   reorderCategories,
   getCategoryItems,
   addItemsToCategory,
-  removeItemFromCategory
+  removeItemFromCategory,
+  removeItemsFromCategory
 } from '../categories'
 
 export function registerIpcHandlers(): void {
@@ -73,6 +74,28 @@ export function registerIpcHandlers(): void {
     db.prepare('UPDATE media_files SET disliked = ? WHERE id = ?').run(disliked ? 1 : 0, fileId)
   })
 
+  // 批量设置喜欢（多选模式，事务批写）
+  ipcMain.handle(IPC.SET_LIKED_BATCH, (_event, fileIds: number[], liked: boolean) => {
+    if (fileIds.length === 0) return
+    const db = getDatabase()
+    const update = db.prepare('UPDATE media_files SET liked = ? WHERE id = ?')
+    const txn = db.transaction((ids: number[]) => {
+      for (const id of ids) update.run(liked ? 1 : 0, id)
+    })
+    txn(fileIds)
+  })
+
+  // 批量设置不感兴趣（多选模式，事务批写）
+  ipcMain.handle(IPC.SET_DISLIKED_BATCH, (_event, fileIds: number[], disliked: boolean) => {
+    if (fileIds.length === 0) return
+    const db = getDatabase()
+    const update = db.prepare('UPDATE media_files SET disliked = ? WHERE id = ?')
+    const txn = db.transaction((ids: number[]) => {
+      for (const id of ids) update.run(disliked ? 1 : 0, id)
+    })
+    txn(fileIds)
+  })
+
   // 标记文件失效（缩略图生成失败 / 文件已删除 / 损坏）
   ipcMain.handle(IPC.MARK_UNAVAILABLE, (_event, fileId: number, reason: string) => {
     const db = getDatabase()
@@ -116,6 +139,9 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC.REMOVE_ITEM_FROM_CATEGORY, (_event, categoryId: number, fileId: number) =>
     removeItemFromCategory(categoryId, fileId)
+  )
+  ipcMain.handle(IPC.REMOVE_ITEMS_FROM_CATEGORY, (_event, categoryId: number, fileIds: number[]) =>
+    removeItemsFromCategory(categoryId, fileIds)
   )
 }
 

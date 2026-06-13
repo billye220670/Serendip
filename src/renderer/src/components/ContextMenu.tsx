@@ -16,11 +16,17 @@ export interface ContextMenuItem {
 }
 
 export interface ContextMenuProps {
-  /** 触发位置（鼠标坐标） */
+  /** 触发位置（鼠标坐标，或 placement='top' 时的锚点上沿中心） */
   x: number
   y: number
   items: ContextMenuItem[]
   onClose: () => void
+  /**
+   * 弹出方位：
+   * - 'cursor'（默认）：左上角锚定到 (x,y)，溢出时翻转
+   * - 'top'：在 (x,y) 上方居中浮出（用于底部工具条的"加入分类"等）
+   */
+  placement?: 'cursor' | 'top'
 }
 
 /**
@@ -31,29 +37,46 @@ export interface ContextMenuProps {
  * - 点击菜单外、按 Esc、滚动、窗口失焦都会关闭
  * - 自动避开屏幕右/下边界
  */
-export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): React.JSX.Element {
+export function ContextMenu({
+  x,
+  y,
+  items,
+  onClose,
+  placement = 'cursor'
+}: ContextMenuProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
   const [position, setPosition] = useState<{ left: number; top: number }>({
     left: x,
     top: y
   })
 
-  // 在 layout 阶段测量后调整位置，避开屏幕右下边缘
+  // 在 layout 阶段测量后调整位置，避开屏幕边缘
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     const rect = el.getBoundingClientRect()
     const margin = 8
-    let left = x
-    let top = y
+    let left: number
+    let top: number
+    if (placement === 'top') {
+      // 在锚点上方居中浮出
+      left = x - rect.width / 2
+      top = y - rect.height - margin
+    } else {
+      left = x
+      top = y
+      if (top + rect.height + margin > window.innerHeight) {
+        top = Math.max(margin, window.innerHeight - rect.height - margin)
+      }
+    }
+    // 水平 / 顶部边界夹紧
     if (left + rect.width + margin > window.innerWidth) {
-      left = Math.max(margin, window.innerWidth - rect.width - margin)
+      left = window.innerWidth - rect.width - margin
     }
-    if (top + rect.height + margin > window.innerHeight) {
-      top = Math.max(margin, window.innerHeight - rect.height - margin)
-    }
+    if (left < margin) left = margin
+    if (top < margin) top = margin
     setPosition({ left, top })
-  }, [x, y])
+  }, [x, y, placement])
 
   // 关闭事件：外部点击 / Esc / 滚动 / 窗口失焦
   useEffect(() => {

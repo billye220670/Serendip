@@ -17,6 +17,8 @@
   --color-muted-foreground: #78716c;
   --color-sidebar: #f5f5f4;
   --color-card-shadow: rgba(0, 0, 0, 0.06);
+  /* 毛玻璃浮层底色：亮色用白色 tint，叠在 backdrop-blur 上保证可读性 */
+  --color-glass: rgba(255, 255, 255, 0.78);
 }
 
 :root[data-theme='dark'] {
@@ -30,6 +32,8 @@
   --color-muted-foreground: #a8a29e;
   --color-sidebar: #1c1917;
   --color-card-shadow: rgba(0, 0, 0, 0.4);
+  /* 毛玻璃浮层底色：暗色用黑色 tint */
+  --color-glass: rgba(0, 0, 0, 0.55);
 }
 
 /* 默认亮色 */

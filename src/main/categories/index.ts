@@ -143,3 +143,14 @@ export function removeItemFromCategory(categoryId: number, fileId: number): void
     fileId
   )
 }
+
+/** 批量从分类移除媒体项（事务） */
+export function removeItemsFromCategory(categoryId: number, fileIds: number[]): void {
+  if (fileIds.length === 0) return
+  const db = getDatabase()
+  const del = db.prepare('DELETE FROM category_items WHERE category_id = ? AND file_id = ?')
+  const txn = db.transaction((ids: number[]) => {
+    for (const id of ids) del.run(categoryId, id)
+  })
+  txn(fileIds)
+}

@@ -16,6 +16,7 @@ export default {
         border: 'var(--color-border)',
         muted: 'var(--color-muted)',
         'muted-foreground': 'var(--color-muted-foreground)',
+        glass: 'var(--color-glass)',
       },
     },
   },

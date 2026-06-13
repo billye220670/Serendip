@@ -5,9 +5,12 @@ import { useInView } from 'react-intersection-observer'
 import { Loader2, Heart, HeartOff, EyeOff, FolderOpen, Folder } from 'lucide-react'
 import { MediaCard } from '../components/MediaCard'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
+import { SelectionToolbar } from '../components/SelectionToolbar'
 import { useUIStore } from '../stores/ui'
 import { useLibraryStore } from '../stores/library'
 import { useCategoriesStore } from '../stores/categories'
+import { useGridSelection } from '../stores/selection'
+import { getColumns } from '../lib/grid'
 import type { MediaItem } from '../../../main/recommender'
 
 const BATCH_SIZE = 30
@@ -29,6 +32,7 @@ interface MenuState {
 
 export function ExploreView(): React.JSX.Element {
   const exploreMode = useUIStore((s) => s.exploreMode)
+  const gridSize = useUIStore((s) => s.gridSize)
   const rootPath = useLibraryStore((s) => s.rootPath)
   const loadStats = useLibraryStore((s) => s.loadStats)
   const categories = useCategoriesStore((s) => s.categories)
@@ -40,6 +44,21 @@ export function ExploreView(): React.JSX.Element {
   const seenIdsRef = useRef<Set<number>>(new Set())
   const loadingRef = useRef(false)
   const hasMoreRef = useRef(true)
+
+  // 多选（阶段 5）
+  const {
+    selectedCount,
+    selectionActive,
+    handleSelectClick,
+    handleLongPress,
+    handleSelectAll,
+    getSelectedIds,
+    deselectAll,
+    clear: clearSelection
+  } = useGridSelection(items)
+
+  // 离开探索视图时清空选择
+  useEffect(() => () => clearSelection(), [clearSelection])
 
   const loadMore = useCallback(
     async (initial = false): Promise<void> => {
@@ -169,6 +188,53 @@ export function ExploreView(): React.JSX.Element {
 
   const closeMenu = useCallback(() => setMenu(null), [])
 
+  // ===== 批量操作（多选工具条） =====
+
+  const handleBatchLike = useCallback(async () => {
+    const ids = getSelectedIds()
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    setItems((prev) => prev.map((it) => (idSet.has(it.id) ? { ...it, liked: 1 } : it)))
+    deselectAll()
+    try {
+      await window.api.setLikedBatch(ids, true)
+      void loadStats()
+    } catch (err) {
+      console.error('setLikedBatch failed:', err)
+    }
+  }, [getSelectedIds, deselectAll, loadStats])
+
+  const handleBatchDislike = useCallback(async () => {
+    const ids = getSelectedIds()
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    deselectAll()
+    setItems((prev) => {
+      const next = prev.filter((it) => !idSet.has(it.id))
+      if (next.length < BATCH_SIZE / 2 && hasMoreRef.current) void loadMore(false)
+      return next
+    })
+    try {
+      await window.api.setDislikedBatch(ids, true)
+    } catch (err) {
+      console.error('setDislikedBatch failed:', err)
+    }
+  }, [getSelectedIds, deselectAll, loadMore])
+
+  const handleBatchAddToCategory = useCallback(
+    async (categoryId: number) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      deselectAll()
+      try {
+        await addItemsToCategory(categoryId, ids)
+      } catch (err) {
+        console.error('addItemsToCategory failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, addItemsToCategory]
+  )
+
   // 把 MediaItem 转换成 react-photo-album 接受的 Photo 形态
   const photos: MediaPhoto[] = items.map((item) => ({
     key: String(item.id),
@@ -236,13 +302,7 @@ export function ExploreView(): React.JSX.Element {
     <div className="p-4">
       <MasonryPhotoAlbum
         photos={photos}
-        columns={(containerWidth) => {
-          if (containerWidth < 600) return 2
-          if (containerWidth < 900) return 3
-          if (containerWidth < 1200) return 4
-          if (containerWidth < 1600) return 5
-          return 6
-        }}
+        columns={(containerWidth) => getColumns(containerWidth, gridSize)}
         spacing={12}
         render={{
           photo: (_props, { photo, width, height }) => (
@@ -252,6 +312,8 @@ export function ExploreView(): React.JSX.Element {
                 onLikeToggle={handleLikeToggle}
                 onContextMenu={handleContextMenu}
                 onThumbError={handleThumbError}
+                onSelectClick={handleSelectClick}
+                onLongPress={handleLongPress}
               />
             </div>
           )
@@ -276,6 +338,19 @@ export function ExploreView(): React.JSX.Element {
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
       )}
+
+      <SelectionToolbar
+        active={selectionActive}
+        count={selectedCount}
+        totalCount={items.length}
+        onClear={clearSelection}
+        onSelectAll={handleSelectAll}
+        onDeselectAll={deselectAll}
+        categories={categories}
+        onLike={handleBatchLike}
+        onDislike={handleBatchDislike}
+        onAddToCategory={handleBatchAddToCategory}
+      />
     </div>
   )
 }

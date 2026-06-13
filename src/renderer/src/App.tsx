@@ -18,12 +18,15 @@ import { getEventCoordinates } from '@dnd-kit/utilities'
 import { useUIStore } from './stores/ui'
 import { useLibraryStore } from './stores/library'
 import { useCategoriesStore } from './stores/categories'
+import { useSelectionStore } from './stores/selection'
 import { ExploreView } from './views/Explore'
 import { CategoryView } from './views/CategoryView'
 import { CategoryList } from './components/CategoryList'
 import { PromptDialog } from './components/PromptDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { ContextMenu } from './components/ContextMenu'
 import { MediaDragPreview, CategoryDragPreview } from './components/DragPreview'
+import { GRID_SIZE_LABEL } from './lib/grid'
 import {
   Sun,
   Moon,
@@ -32,7 +35,10 @@ import {
   Heart,
   Loader2,
   RefreshCw,
-  Plus
+  Plus,
+  LayoutGrid,
+  FolderInput,
+  Copy
 } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../main/categories'
@@ -42,7 +48,7 @@ type DragType = 'category' | 'media' | null
 
 /** 当前拖拽中的对象，用于渲染 DragOverlay 浮层 */
 type ActiveDrag =
-  | { type: 'media'; item: MediaItem }
+  | { type: 'media'; item: MediaItem; count: number }
   | { type: 'category'; name: string }
   | null
 
@@ -87,6 +93,8 @@ const collisionDetection: CollisionDetection = (args) => {
 
 function App(): React.JSX.Element {
   const { theme, toggleTheme, exploreMode, setExploreMode } = useUIStore()
+  const gridSize = useUIStore((s) => s.gridSize)
+  const cycleGridSize = useUIStore((s) => s.cycleGridSize)
   const {
     rootPath,
     isScanning,
@@ -95,7 +103,8 @@ function App(): React.JSX.Element {
     view,
     setView,
     loadCurrentRoot,
-    startScan
+    startScan,
+    bumpCategoryRefresh
   } = useLibraryStore()
   const categories = useCategoriesStore((s) => s.categories)
   const loadCategories = useCategoriesStore((s) => s.load)
@@ -104,6 +113,7 @@ function App(): React.JSX.Element {
   const removeCategory = useCategoriesStore((s) => s.remove)
   const reorderCategories = useCategoriesStore((s) => s.reorder)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
+  const removeItemsFromCategory = useCategoriesStore((s) => s.removeItems)
 
   // 弹窗状态
   const [showCreate, setShowCreate] = useState(false)
@@ -116,6 +126,14 @@ function App(): React.JSX.Element {
   const [hoveredDropCategoryId, setHoveredDropCategoryId] = useState<number | null>(
     null
   )
+  // 从分类拖到另一分类时的"移动/复制"投放菜单
+  const [dropMenu, setDropMenu] = useState<{
+    x: number
+    y: number
+    sourceCategoryId: number
+    targetCategoryId: number
+    ids: number[]
+  } | null>(null)
 
   // 8px 的距离阈值：单击不会触发拖拽
   const sensors = useSensors(
@@ -142,8 +160,12 @@ function App(): React.JSX.Element {
     const data = e.active.data.current
     const t = data?.type
     if (t === 'media') {
+      // 若拖的是已选中的项且选中多于 1，则整组一起拖
+      const fileId = data?.fileId as number
+      const sel = useSelectionStore.getState().selected
+      const count = sel.has(fileId) && sel.size > 1 ? sel.size : 1
       setDragType('media')
-      setActiveDrag({ type: 'media', item: data?.item as MediaItem })
+      setActiveDrag({ type: 'media', item: data?.item as MediaItem, count })
     } else if (t === 'category') {
       setDragType('category')
       setActiveDrag({ type: 'category', name: data?.name as string })
@@ -193,16 +215,63 @@ function App(): React.JSX.Element {
       // 2) 媒体投放到分类
       if (activeType === 'media' && overData?.type === 'category') {
         const fileId = e.active.data.current?.fileId as number
-        const categoryId = overData.categoryId as number
+        const targetCategoryId = overData.categoryId as number
+        const sel = useSelectionStore.getState().selected
+        const ids = sel.has(fileId) && sel.size > 1 ? [...sel] : [fileId]
+        const sourceCategoryId = view.kind === 'category' ? view.id : null
+
+        // 从某分类拖到「另一个」分类：弹"移动 / 复制"菜单，锚定在目标 tab 右侧
+        if (sourceCategoryId !== null && sourceCategoryId !== targetCategoryId) {
+          const rect = e.over.rect
+          setDropMenu({
+            x: rect.right,
+            y: rect.top,
+            sourceCategoryId,
+            targetCategoryId,
+            ids
+          })
+          return
+        }
+
+        // 其余情况（探索来源、或拖回当前分类自身）：直接加入
         try {
-          await addItemsToCategory(categoryId, [fileId])
+          await addItemsToCategory(targetCategoryId, ids)
+          if (ids.length > 1) useSelectionStore.getState().deselectAll()
         } catch (err) {
           console.error('addItemsToCategory failed:', err)
         }
       }
     },
-    [categories, reorderCategories, addItemsToCategory]
+    [categories, reorderCategories, addItemsToCategory, view]
   )
+
+  // 投放菜单：移动到此 = 加到目标 + 从来源移除；复制到此 = 仅加到目标
+  const handleDropMove = useCallback(async () => {
+    if (!dropMenu) return
+    const { sourceCategoryId, targetCategoryId, ids } = dropMenu
+    setDropMenu(null)
+    useSelectionStore.getState().deselectAll()
+    try {
+      await addItemsToCategory(targetCategoryId, ids)
+      await removeItemsFromCategory(sourceCategoryId, ids)
+      // 当前正看的就是来源分类，触发其重载，移走的项消失
+      bumpCategoryRefresh()
+    } catch (err) {
+      console.error('move to category failed:', err)
+    }
+  }, [dropMenu, addItemsToCategory, removeItemsFromCategory, bumpCategoryRefresh])
+
+  const handleDropCopy = useCallback(async () => {
+    if (!dropMenu) return
+    const { targetCategoryId, ids } = dropMenu
+    setDropMenu(null)
+    useSelectionStore.getState().deselectAll()
+    try {
+      await addItemsToCategory(targetCategoryId, ids)
+    } catch (err) {
+      console.error('copy to category failed:', err)
+    }
+  }, [dropMenu, addItemsToCategory])
 
   const handleCreateCategory = async (
     name: string
@@ -319,7 +388,7 @@ function App(): React.JSX.Element {
 
         {/* 右侧主区域 */}
         <main className="flex-1 flex flex-col min-w-0">
-          <header className="h-16 flex-shrink-0 sticky top-0 z-10 flex items-center px-6 border-b border-border gap-4 bg-background/95 backdrop-blur">
+          <header className="h-16 flex-shrink-0 sticky top-0 z-10 flex items-center px-6 border-b border-border gap-4 bg-glass backdrop-blur-xl">
             <button
               onClick={handleSelectRoot}
               disabled={isScanning}
@@ -364,6 +433,20 @@ function App(): React.JSX.Element {
                   onClick={() => setExploreMode('explore')}
                 />
               </div>
+            )}
+
+            {/* 缩略图尺寸切换（小 / 中 / 大）— 所有 Masonry 视图通用，靠右 */}
+            {rootPath && !isScanning && (
+              <button
+                onClick={cycleGridSize}
+                className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors"
+                title="切换缩略图大小"
+              >
+                <LayoutGrid className="w-4 h-4" />
+                <span className="w-3 text-center tabular-nums">
+                  {GRID_SIZE_LABEL[gridSize]}
+                </span>
+              </button>
             )}
           </header>
 
@@ -428,11 +511,34 @@ function App(): React.JSX.Element {
       {/* 拖拽浮层 — 中心吸附到鼠标，跟随光标 */}
       <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
         {activeDrag?.type === 'media' ? (
-          <MediaDragPreview item={activeDrag.item} />
+          <MediaDragPreview item={activeDrag.item} count={activeDrag.count} />
         ) : activeDrag?.type === 'category' ? (
           <CategoryDragPreview name={activeDrag.name} />
         ) : null}
       </DragOverlay>
+
+      {/* 跨分类投放：移动 / 复制 菜单（锚定在目标 tab 右侧） */}
+      {dropMenu && (
+        <ContextMenu
+          x={dropMenu.x}
+          y={dropMenu.y}
+          items={[
+            {
+              key: 'move',
+              label: `移动到此（${dropMenu.ids.length}）`,
+              icon: FolderInput,
+              onClick: () => void handleDropMove()
+            },
+            {
+              key: 'copy',
+              label: `复制到此（${dropMenu.ids.length}）`,
+              icon: Copy,
+              onClick: () => void handleDropCopy()
+            }
+          ]}
+          onClose={() => setDropMenu(null)}
+        />
+      )}
     </DndContext>
   )
 }

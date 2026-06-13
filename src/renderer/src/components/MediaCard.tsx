@@ -1,8 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useDraggable } from '@dnd-kit/core'
-import { Heart, MoreVertical, Play } from 'lucide-react'
+import { Heart, MoreVertical, Play, Check } from 'lucide-react'
 import clsx from 'clsx'
 import type { MediaItem } from '../../../main/recommender'
+import { useSelectionStore, type SelectMods } from '../stores/selection'
 
 interface MediaCardProps {
   item: MediaItem
@@ -12,7 +13,14 @@ interface MediaCardProps {
   onThumbError?: (item: MediaItem) => void
   /** 启用拖拽 — 用于把媒体拖到侧栏分类。默认开启 */
   draggable?: boolean
+  /** 多选点击（Ctrl/Shift/多选模式下的单击）。视图负责区间计算 */
+  onSelectClick?: (item: MediaItem, mods: SelectMods) => void
+  /** 长按进入多选 */
+  onLongPress?: (item: MediaItem) => void
 }
+
+const LONG_PRESS_MS = 500 // 长按进入多选的阈值
+const MOVE_CANCEL_PX = 8 // 移动超过此距离即取消长按（与拖拽阈值一致）
 
 const VIDEO_PLAY_LIMIT = 3 // 最多 3 个视频同时播放
 const playingVideos = new Map<number, HTMLVideoElement>() // id → 元素引用
@@ -82,7 +90,9 @@ export function MediaCard({
   onLikeToggle,
   onContextMenu,
   onThumbError,
-  draggable = true
+  draggable = true,
+  onSelectClick,
+  onLongPress
 }: MediaCardProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
   const [shouldPlayVideo, setShouldPlayVideo] = useState(false)
@@ -91,6 +101,16 @@ export function MediaCard({
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const enterTimerRef = useRef<number | null>(null)
   const leaveTimerRef = useRef<number | null>(null)
+
+  // 多选状态：卡片自身订阅，避免把 selected/active 透传到瀑布流 render 触发整列表重渲染
+  const selected = useSelectionStore((s) => s.selected.has(item.id))
+  const selectionActive = useSelectionStore((s) => s.active)
+
+  // 长按检测：与拖拽共存。pointerdown 起计时，移动超阈值或松手即取消；
+  // 触发后用 ref 标记，抑制随后的 click，避免再次切换选中
+  const longPressTimerRef = useRef<number | null>(null)
+  const longPressFiredRef = useRef(false)
+  const pressStartRef = useRef<{ x: number; y: number } | null>(null)
 
   // dnd-kit：把媒体注册成可拖拽对象。activationConstraint 见 App 的 PointerSensor 配置，
   // 只有真正拖动 > 8px 才会触发，单击 / 右键 / hover 不受影响
@@ -108,11 +128,20 @@ export function MediaCard({
   // liked 直接以 props 为准（父级 setItems 后会自动同步）
   const liked = !!item.liked
 
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current !== null) {
+      window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+    pressStartRef.current = null
+  }, [])
+
   // 卸载时清理所有定时器
   useEffect(() => {
     return () => {
       if (enterTimerRef.current !== null) window.clearTimeout(enterTimerRef.current)
       if (leaveTimerRef.current !== null) window.clearTimeout(leaveTimerRef.current)
+      if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current)
     }
   }, [])
 
@@ -228,19 +257,77 @@ export function MediaCard({
     onThumbError?.(item)
   }, [item, onThumbError])
 
+  // pointerdown：先交给 dnd-kit 保留拖拽激活，再起长按计时（仅左键）
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent): void => {
+      dragListeners?.onPointerDown?.(e)
+      if (e.button !== 0) return
+      longPressFiredRef.current = false
+      pressStartRef.current = { x: e.clientX, y: e.clientY }
+      if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = window.setTimeout(() => {
+        longPressFiredRef.current = true
+        longPressTimerRef.current = null
+        onLongPress?.(item)
+      }, LONG_PRESS_MS)
+    },
+    [dragListeners, item, onLongPress]
+  )
+
+  // 移动超过阈值（开始拖拽 / 滑动）就取消长按
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent): void => {
+      const start = pressStartRef.current
+      if (!start || longPressTimerRef.current === null) return
+      if (
+        Math.abs(e.clientX - start.x) > MOVE_CANCEL_PX ||
+        Math.abs(e.clientY - start.y) > MOVE_CANCEL_PX
+      ) {
+        cancelLongPress()
+      }
+    },
+    [cancelLongPress]
+  )
+
+  // 单击：多选模式或带修饰键时进入选择逻辑；长按刚触发则吞掉本次 click
+  const handleClick = useCallback(
+    (e: React.MouseEvent): void => {
+      if (longPressFiredRef.current) {
+        longPressFiredRef.current = false
+        e.preventDefault()
+        return
+      }
+      const mods: SelectMods = { ctrlOrMeta: e.ctrlKey || e.metaKey, shift: e.shiftKey }
+      if (selectionActive || mods.ctrlOrMeta || mods.shift) {
+        e.preventDefault()
+        onSelectClick?.(item, mods)
+      }
+      // 否则：非多选下的普通单击，暂无行为（尚无灯箱）
+    },
+    [selectionActive, item, onSelectClick]
+  )
+
   const thumbUrl = `serendip://thumb/${item.id}`
 
   return (
     <div
       ref={setDragRef}
       {...dragAttributes}
-      {...dragListeners}
       className={clsx(
-        'relative group rounded-lg overflow-hidden bg-muted cursor-pointer w-full h-full',
-        isDragHovering && 'opacity-50'
+        'relative group rounded-lg overflow-hidden bg-muted cursor-pointer w-full h-full select-none outline-none focus:outline-none focus-visible:outline-none',
+        isDragHovering && 'opacity-50',
+        selected && 'ring-2 ring-primary ring-inset'
       )}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={cancelLongPress}
+      onPointerCancel={cancelLongPress}
+      onClick={handleClick}
       onMouseEnter={handleHoverStart}
-      onMouseLeave={handleHoverEnd}
+      onMouseLeave={() => {
+        cancelLongPress()
+        handleHoverEnd()
+      }}
       onContextMenu={(e) => onContextMenu?.(e, item)}
     >
       {/* 缩略图 / 视频封面 */}
@@ -309,18 +396,36 @@ export function MediaCard({
         />
       </button>
 
-      <button
-        onClick={(e) => {
-          e.stopPropagation()
-          onContextMenu?.(e, item)
-        }}
-        className={clsx(
-          'absolute top-2 left-2 p-1.5 rounded-full bg-black/40 backdrop-blur text-white transition-opacity',
-          hovered ? 'opacity-100' : 'opacity-0'
-        )}
-      >
-        <MoreVertical className="w-3.5 h-3.5" />
-      </button>
+      {/* 多选复选框：仅多选模式常显，pointer-events-none 让点击落到卡片以切换选中。
+          不加 z 抬层，否则会越过 header 的 sticky 层级盖在顶栏之上 */}
+      {selectionActive && (
+        <div
+          className={clsx(
+            'absolute top-2 left-2 w-5 h-5 rounded-full flex items-center justify-center border-2 transition-colors pointer-events-none',
+            selected
+              ? 'bg-primary border-primary text-white'
+              : 'bg-black/40 border-white/80 backdrop-blur'
+          )}
+        >
+          {selected && <Check className="w-3 h-3" strokeWidth={3} />}
+        </div>
+      )}
+
+      {/* 更多操作按钮：多选模式下隐藏（右键菜单仍可用） */}
+      {!selectionActive && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onContextMenu?.(e, item)
+          }}
+          className={clsx(
+            'absolute top-2 left-2 p-1.5 rounded-full bg-black/40 backdrop-blur text-white transition-opacity',
+            hovered ? 'opacity-100' : 'opacity-0'
+          )}
+        >
+          <MoreVertical className="w-3.5 h-3.5" />
+        </button>
+      )}
     </div>
   )
 }

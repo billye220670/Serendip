@@ -15,6 +15,8 @@ interface CategoriesState {
   addItems: (categoryId: number, fileIds: number[]) => Promise<number>
   /** 从分类移除媒体，并刷新计数 */
   removeItem: (categoryId: number, fileId: number) => Promise<void>
+  /** 批量从分类移除媒体，并刷新计数 */
+  removeItems: (categoryId: number, fileIds: number[]) => Promise<void>
 }
 
 export const useCategoriesStore = create<CategoriesState>((set, get) => ({
@@ -74,6 +76,18 @@ export const useCategoriesStore = create<CategoriesState>((set, get) => ({
     set((s) => ({
       categories: s.categories.map((c) =>
         c.id === categoryId ? { ...c, itemCount: Math.max(0, c.itemCount - 1) } : c
+      )
+    }))
+  },
+
+  removeItems: async (categoryId: number, fileIds: number[]) => {
+    if (fileIds.length === 0) return
+    await window.api.removeItemsFromCategory(categoryId, fileIds)
+    set((s) => ({
+      categories: s.categories.map((c) =>
+        c.id === categoryId
+          ? { ...c, itemCount: Math.max(0, c.itemCount - fileIds.length) }
+          : c
       )
     }))
   }
