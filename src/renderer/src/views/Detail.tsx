@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { ArrowLeft, VideoOff } from 'lucide-react'
+import { ArrowLeft, ImageOff, VideoOff } from 'lucide-react'
 import clsx from 'clsx'
 import { useDetailStore, BUFFER_SIZE } from '../stores/detail'
 import type { MediaItem } from '../../../main/recommender'
@@ -29,19 +29,6 @@ export function DetailView(): React.JSX.Element | null {
       setVisible(false)
     }
   }, [isOpen])
-
-  // 切图方向（用于纵向位移动效）
-  const [slideDir, setSlideDir] = useState<'up' | 'down' | null>(null)
-  const [slideKey, setSlideKey] = useState(0)
-  const prevCursorRef = useRef(cursor)
-  useEffect(() => {
-    if (!isOpen) return
-    if (cursor !== prevCursorRef.current) {
-      setSlideDir(cursor > prevCursorRef.current ? 'down' : 'up')
-      setSlideKey((k) => k + 1)
-      prevCursorRef.current = cursor
-    }
-  }, [cursor, isOpen])
 
   // 打开时锁定 body 滚动，防止滚轮穿透到底层瀑布流
   useEffect(() => {
@@ -107,15 +94,8 @@ export function DetailView(): React.JSX.Element | null {
         <span>后退</span>
       </button>
 
-      {/* 内容区（有切图动效） */}
-      <div
-        key={slideKey}
-        className={clsx(
-          'w-full h-full flex items-center justify-center',
-          slideDir === 'down' && 'slide-from-bottom',
-          slideDir === 'up' && 'slide-from-top'
-        )}
-      >
+      {/* 内容区（瞬切，无位移动效） */}
+      <div className="w-full h-full flex items-center justify-center">
         {currentItem.type === 'video' ? (
           <VideoPlayer item={currentItem} />
         ) : (
@@ -132,38 +112,56 @@ export function DetailView(): React.JSX.Element | null {
   )
 }
 
-/** blur-up 图片查看器 */
+/**
+ * 图片查看器 —— 激进瞬切 + 缩略图兜底。
+ *
+ * 渲染规则：
+ * - 始终先把 320px 缩略图盖底（必然命中本地 cache，几乎瞬切）。
+ * - 同步加载原图，onLoad 触发时立即覆盖在上层（无淡入，瞬切）。
+ * - 切到下一张时，fullLoaded 重置；如果原图还没回来，用户暂时看的是新图的缩略图，避免空白。
+ * - 原图加载失败显示纯黑底 + 提示。
+ */
 function ImageViewer({ item }: { item: MediaItem }): React.JSX.Element {
   const [fullLoaded, setFullLoaded] = useState(false)
-  const thumbUrl = `serendip://thumb/${item.id}`
-  const fullUrl = `serendip://image/${item.id}`
+  const [error, setError] = useState(false)
 
   useEffect(() => {
     setFullLoaded(false)
+    setError(false)
   }, [item.id])
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center gap-3 text-white/60">
+        <ImageOff className="w-12 h-12" />
+        <p className="text-sm">无法加载图片</p>
+      </div>
+    )
+  }
 
   return (
     <div className="relative w-full h-full flex items-center justify-center">
+      {/* 缩略图兜底层：仅在原图未到位时显示，无 blur、无 transition，纯瞬切 */}
+      {!fullLoaded && (
+        <img
+          src={`serendip://thumb/${item.id}`}
+          alt=""
+          className="absolute max-w-full max-h-full object-contain select-none pointer-events-none"
+          draggable={false}
+        />
+      )}
+      {/* 原图层：onLoad 时立即显示并覆盖兜底层 */}
       <img
-        src={thumbUrl}
+        src={`serendip://image/${item.id}`}
         alt=""
-        className={clsx(
-          'absolute max-w-full max-h-full object-contain select-none pointer-events-none',
-          'transition-opacity duration-150',
-          fullLoaded ? 'opacity-0' : 'opacity-100'
-        )}
-        style={{ filter: 'blur(8px)', transform: 'scale(1.05)' }}
-      />
-      <img
-        src={fullUrl}
-        alt=""
-        className={clsx(
-          'absolute max-w-full max-h-full object-contain select-none',
-          'transition-opacity duration-150',
-          fullLoaded ? 'opacity-100' : 'opacity-0'
-        )}
+        className="absolute max-w-full max-h-full object-contain select-none"
+        draggable={false}
+        style={{ opacity: fullLoaded ? 1 : 0 }}
         onLoad={() => setFullLoaded(true)}
-        onError={() => console.warn(`Full image load failed: item ${item.id}`)}
+        onError={() => {
+          console.warn(`Image load failed: item ${item.id}`)
+          setError(true)
+        }}
       />
     </div>
   )
