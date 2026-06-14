@@ -62,8 +62,8 @@ export function registerIpcHandlers(): void {
   })
 
   // 获取推荐内容
-  ipcMain.handle(IPC.GET_RECOMMENDATIONS, (_event, count: number, mode: ExploreMode, onlyUnrated?: boolean) => {
-    return recommend({ count, mode, onlyUnrated })
+  ipcMain.handle(IPC.GET_RECOMMENDATIONS, (_event, count: number, mode: ExploreMode, onlyUnrated?: boolean, scopePath?: string) => {
+    return recommend({ count, mode, onlyUnrated, scopePath })
   })
 
   // 设置喜欢

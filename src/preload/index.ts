@@ -11,8 +11,8 @@ const api: SerendipAPI = {
   getCurrentRoot: () => ipcRenderer.invoke(IPC.GET_CURRENT_ROOT),
   getStats: () => ipcRenderer.invoke(IPC.GET_STATS),
 
-  getRecommendations: (count: number, mode: ExploreMode, onlyUnrated?: boolean) =>
-    ipcRenderer.invoke(IPC.GET_RECOMMENDATIONS, count, mode, onlyUnrated),
+  getRecommendations: (count: number, mode: ExploreMode, onlyUnrated?: boolean, scopePath?: string) =>
+    ipcRenderer.invoke(IPC.GET_RECOMMENDATIONS, count, mode, onlyUnrated, scopePath),
   setLiked: (fileId: number, liked: boolean) =>
     ipcRenderer.invoke(IPC.SET_LIKED, fileId, liked),
   setDisliked: (fileId: number, disliked: boolean) =>

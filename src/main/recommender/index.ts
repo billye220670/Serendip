@@ -33,6 +33,8 @@ interface RecommendOptions {
   excludeIds?: Set<number>
   /** 仅返回 liked=0 AND disliked=0 的未评级文件（评审模式专用） */
   onlyUnrated?: boolean
+  /** 限定抽样路径范围（详情页接力用）；必须在 rootPath 之下，否则忽略 */
+  scopePath?: string
 }
 
 interface FolderWeight {
@@ -45,7 +47,7 @@ interface FolderWeight {
  * 抽取一批推荐内容
  */
 export function recommend(options: RecommendOptions): MediaItem[] {
-  const { count, mode, excludeIds = new Set(), onlyUnrated = false } = options
+  const { count, mode, excludeIds = new Set(), onlyUnrated = false, scopePath } = options
   const db = getDatabase()
 
   // 模式参数
@@ -56,7 +58,12 @@ export function recommend(options: RecommendOptions): MediaItem[] {
     | { value: string }
     | undefined
   if (!rootRow) return []
-  const rootPrefix = escapeLike(rootRow.value)
+  const rootPath = rootRow.value
+
+  // scopePath 必须在 rootPath 之下，否则回退到 rootPath
+  const effectiveScopePath =
+    scopePath && scopePath.startsWith(rootPath) ? scopePath : rootPath
+  const rootPrefix = escapeLike(effectiveScopePath)
 
   const unratedFilter = onlyUnrated ? ' AND liked = 0' : ''
 

@@ -87,6 +87,26 @@ body {
   background: var(--color-muted-foreground);
 }
 
+/* 详情页切图纵向滑入动画 */
+@keyframes slide-from-bottom {
+  from { transform: translateY(24px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes slide-from-top {
+  from { transform: translateY(-24px); opacity: 0; }
+  to   { transform: translateY(0);     opacity: 1; }
+}
+.slide-from-bottom { animation: slide-from-bottom 0.22s ease-out both; }
+.slide-from-top    { animation: slide-from-top    0.22s ease-out both; }
+
+/* 详情页底部缩略图条 — 项的宽度/边距/透明度由组件内 inline style 驱动，
+ * 这里只声明 transition 与不可变样式 */
+.thumb-strip-item {
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: width 0.24s ease-out, margin-right 0.24s ease-out, opacity 0.24s ease-out;
+}
+
 /* 评审卡片入场动画
  * - scale 与 aspect-ratio 同步插值，两者都是独立 CSS 属性，不干扰 transform（拖拽）
  * - from: 与后方卡片同一比例(4/5) + 同一缩放(0.85)，to: 自然比例 + 全尺寸

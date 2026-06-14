@@ -150,25 +150,19 @@ interface DetailState {
 
 **目标**：点任意瀑布流图片 → 全屏沉浸大图（清晰原图，fit-contain，深色背景）；Esc / 后退一键回原视图且滚动位置保留。视频能在详情页内播放并带基础控制，切走停止解码。
 
-**改动文件**：
-- `src/main/thumbnailer/protocol.ts`：新增 `image` 分支（原字节 + mime；heic/heif sharp 转码兜底）。
-- `src/renderer/src/stores/detail.ts`（新建）：`isOpen` / `open(item)` / `close()`（本阶段先做这三个，sequence 用 `[item]` 占位）。
-- `src/renderer/src/views/Detail.tsx`（新建）：`fixed inset-0 z-50` overlay。c 大图区（blur-up：先 `serendip://thumb/<id>`，原图 `serendip://image/<id>` onLoad 后淡入；视频走 `serendip://video/<id>` + `controls`，contain）。a 后退按钮（左上）+ Esc 关闭。进入/退出转场（整图缩放+淡入淡出，GPU 合成层 `transform`/`opacity`）。
-- `src/renderer/src/components/MediaCard.tsx`：新增 `onOpenDetail?: (item) => void`，`handleClick` 普通单击时调用。
-- `src/renderer/src/App.tsx`：根据 `useDetailStore.isOpen` 渲染 `<Detail/>`；给三个 masonry 视图的 MediaCard 透传 `onOpenDetail`（经各 View 的 render prop）。
-- `Explore.tsx` / `CategoryView.tsx` / `LikedView.tsx`：把 `onOpenDetail` 透传给 `MediaCard`。
+**实际改动**：
+- `src/main/thumbnailer/protocol.ts`：新增 `serendip://image/<id>` 分支；heic/heif 用 sharp 转 jpeg 并缓存到 `.serendip-cache/fullres/`；其余格式 readFile 原字节 + 正确 mime。
+- `src/renderer/src/stores/detail.ts`（新建）：`isOpen` / `currentItem` / `open(item)` / `close()`，Zustand 不持久化。
+- `src/renderer/src/views/Detail.tsx`（新建）：`fixed inset-0 z-50` overlay；blur-up 大图（thumb 模糊占位 → 原图 onLoad 淡入）；视频单实例（`autoPlay muted loop controls`，`onCanPlay` 触发 `play()`）；body `overflow:hidden` + `onWheel stopPropagation` 防滚轮穿透；Esc 关闭；缩放+淡入转场。
+- `MediaCard.tsx`：新增 `onOpenDetail` prop，普通单击（非多选、无修饰键）时调用。
+- `Explore.tsx` / `CategoryView.tsx` / `LikedView.tsx`：各自导入 `useDetailStore`，透传 `onOpenDetail={openDetail}`。
+- `App.tsx`：末尾挂载 `<DetailView />`。
 
-**实现要点**：
-- 视频生命周期自管（§1.5）：切走/关闭 `pause()` + 卸载。
-- 转场走 transform/opacity，避免主线程掉帧。
-- 失效/损坏图：显示占位 + 提示，不崩溃（基础兜底即可，完整异常在阶段 6）。
-
-**测试清单**（交给用户）：
-1. 探索/喜欢/分类三个视图各点一张图，均能打开全屏大图，**图清晰**（非 320px 糊图）。
-2. 大图按比例完整显示（contain），深色背景。
-3. 视频图片打开后能播放，有控制条；点后退/Esc 后视频停止（任务管理器/CPU 不再占用解码）。
-4. Esc 与左上角后退按钮都能关闭；**关闭后回到进入前那个视图，且滚动位置不变**。
-5. （如有 heic 图）能正常显示。
+**踩坑记录**：
+1. **视频控件灰掉（MEDIA_ELEMENT_ERROR: Empty src attribute）**：React Strict Mode dev 环境下，cleanup effect 里 `el.src = ''` + `el.load()` 会在同一 DOM 元素的 re-mount 阶段清空 src 并触发 error，导致播放器进入错误状态。修法：cleanup 只需 `pause()`，移除 src 清空逻辑，浏览器卸载元素时自动停止解码。
+2. **视频不自动播放（autoPlay 不可靠）**：视频加载需要时间，仅靠 `autoPlay` 属性在 Electron Chromium 里时机不稳定。修法：监听 `onCanPlay` 事件，在浏览器确认可以播放时再调 `el.play()`，时机准确。
+3. **滚轮穿透**：`fixed` overlay 不阻止 wheel 事件冒泡，底层瀑布流仍会滚动。修法：`isOpen` 时设 `document.body.style.overflow = 'hidden'`，同时在 overlay div 上加 `onWheel={e => e.stopPropagation()}` 双保险。
+4. **视频元素尺寸问题**：初版用 `max-w-full max-h-full`，视频无内在尺寸时缩到极小。修法：改为 `w-full h-full object-contain`，容器撑满 overlay 后 contain 自适应比例。
 
 ---
 
