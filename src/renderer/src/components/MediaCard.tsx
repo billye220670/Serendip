@@ -17,6 +17,8 @@ interface MediaCardProps {
   onSelectClick?: (item: MediaItem, mods: SelectMods) => void
   /** 长按进入多选 */
   onLongPress?: (item: MediaItem) => void
+  /** 普通单击（非多选、无修饰键）打开详情页 */
+  onOpenDetail?: (item: MediaItem) => void
 }
 
 const LONG_PRESS_MS = 500 // 长按进入多选的阈值
@@ -92,7 +94,8 @@ export function MediaCard({
   onThumbError,
   draggable = true,
   onSelectClick,
-  onLongPress
+  onLongPress,
+  onOpenDetail
 }: MediaCardProps): React.JSX.Element {
   const [hovered, setHovered] = useState(false)
   const [shouldPlayVideo, setShouldPlayVideo] = useState(false)
@@ -301,10 +304,12 @@ export function MediaCard({
       if (selectionActive || mods.ctrlOrMeta || mods.shift) {
         e.preventDefault()
         onSelectClick?.(item, mods)
+        return
       }
-      // 否则：非多选下的普通单击，暂无行为（尚无灯箱）
+      // 普通单击：打开详情页
+      onOpenDetail?.(item)
     },
-    [selectionActive, item, onSelectClick]
+    [selectionActive, item, onSelectClick, onOpenDetail]
   )
 
   const thumbUrl = `serendip://thumb/${item.id}`

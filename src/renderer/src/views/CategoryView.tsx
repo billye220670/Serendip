@@ -10,6 +10,7 @@ import { useCategoriesStore } from '../stores/categories'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
 import { useGridSelection } from '../stores/selection'
+import { useDetailStore } from '../stores/detail'
 import { getColumns } from '../lib/grid'
 import type { MediaItem } from '../../../main/recommender'
 
@@ -47,6 +48,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const view = useLibraryStore((s) => s.view)
   const categoryRefreshNonce = useLibraryStore((s) => s.categoryRefreshNonce)
   const gridSize = useUIStore((s) => s.gridSize)
+  const openDetail = useDetailStore((s) => s.open)
 
   const category = useMemo(
     () => categories.find((c) => c.id === categoryId),
@@ -255,6 +257,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
                   onThumbError={handleThumbError}
                   onSelectClick={handleSelectClick}
                   onLongPress={handleLongPress}
+                  onOpenDetail={openDetail}
                 />
               </div>
             )

@@ -10,6 +10,7 @@ import { useUIStore } from '../stores/ui'
 import { useLibraryStore } from '../stores/library'
 import { useCategoriesStore } from '../stores/categories'
 import { useGridSelection } from '../stores/selection'
+import { useDetailStore } from '../stores/detail'
 import { getColumns } from '../lib/grid'
 import type { MediaItem } from '../../../main/recommender'
 
@@ -37,6 +38,7 @@ export function ExploreView(): React.JSX.Element {
   const loadStats = useLibraryStore((s) => s.loadStats)
   const categories = useCategoriesStore((s) => s.categories)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
+  const openDetail = useDetailStore((s) => s.open)
 
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -314,6 +316,7 @@ export function ExploreView(): React.JSX.Element {
                 onThumbError={handleThumbError}
                 onSelectClick={handleSelectClick}
                 onLongPress={handleLongPress}
+                onOpenDetail={openDetail}
               />
             </div>
           )

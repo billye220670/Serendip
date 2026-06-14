@@ -1,9 +1,21 @@
 import { protocol } from 'electron'
-import { readFile, stat, open } from 'fs/promises'
+import { readFile, writeFile, stat, open } from 'fs/promises'
 import { join, extname } from 'path'
+import { createHash } from 'crypto'
+import sharp from 'sharp'
 import { getDatabase } from '../db'
 import { generateImageThumb, generateVideoThumb, ensureCacheDir } from '../thumbnailer'
 import { CACHE_DIR_NAME } from '../media-types'
+
+const IMAGE_MIME: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.avif': 'image/avif'
+}
 
 const VIDEO_MIME: Record<string, string> = {
   '.mp4': 'video/mp4',
@@ -38,6 +50,23 @@ export function registerThumbProtocol(): void {
         // 标记失效，避免下次还被推荐
         markUnavailable(fileId, err instanceof Error ? err.message : String(err))
         return new Response('Thumbnail not found', { status: 404 })
+      }
+    }
+
+    if (url.hostname === 'image') {
+      const fileId = parseInt(url.pathname.replace(/^\//, ''), 10)
+      if (isNaN(fileId)) {
+        return new Response('Invalid file ID', { status: 400 })
+      }
+      try {
+        const filePath = lookupFilePath(fileId)
+        if (!filePath) {
+          return new Response('File not found', { status: 404 })
+        }
+        return await serveFullImage(filePath)
+      } catch (err) {
+        console.error(`Failed to serve image for file ${fileId}:`, err)
+        return new Response('Image not found', { status: 404 })
       }
     }
 
@@ -137,6 +166,46 @@ function nodeStreamToWebStream(
       ;(nodeStream as NodeJS.ReadableStream & { destroy?: () => void }).destroy?.()
     }
   })
+}
+
+/**
+ * 提供全分辨率图片。
+ * - heic/heif：Chromium 无法渲染，用 sharp 转为高质量 jpeg（结果缓存到 .serendip-cache）。
+ * - gif：返回原字节保留动图。
+ * - 其余格式：直接 readFile + 正确 mime。
+ */
+async function serveFullImage(filePath: string): Promise<Response> {
+  const ext = extname(filePath).toLowerCase()
+
+  if (ext === '.heic' || ext === '.heif') {
+    const db = getDatabase()
+    const rootRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('rootPath') as
+      | { value: string }
+      | undefined
+    if (!rootRow) return new Response('Root path not set', { status: 500 })
+    const cacheDir = join(rootRow.value, CACHE_DIR_NAME, 'fullres')
+    await ensureCacheDir(cacheDir)
+    const hash = createHash('sha256').update(filePath).digest('hex').slice(0, 16)
+    const cacheName = `${hash}.jpg`
+    const cachePath = join(cacheDir, cacheName)
+    let buf: Buffer
+    try {
+      buf = await readFile(cachePath)
+    } catch {
+      buf = await sharp(filePath).jpeg({ quality: 90 }).toBuffer()
+      // 非阻塞写缓存（失败不影响响应）
+      void (async () => {
+        try {
+          await writeFile(cachePath, buf)
+        } catch { /* ignore */ }
+      })()
+    }
+    return new Response(buf, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache' } })
+  }
+
+  const mime = IMAGE_MIME[ext] ?? 'application/octet-stream'
+  const buf = await readFile(filePath)
+  return new Response(buf, { headers: { 'Content-Type': mime, 'Cache-Control': 'no-cache' } })
 }
 
 function lookupFilePath(fileId: number): string | null {

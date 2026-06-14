@@ -24,6 +24,7 @@ import { ExploreView } from './views/Explore'
 import { CategoryView } from './views/CategoryView'
 import { ReviewView } from './views/Review'
 import { LikedView } from './views/LikedView'
+import { DetailView } from './views/Detail'
 import { CategoryList } from './components/CategoryList'
 import { PromptDialog } from './components/PromptDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
@@ -605,6 +606,8 @@ function App(): React.JSX.Element {
           onClose={() => setDropMenu(null)}
         />
       )}
+      {/* 详情页沉浸 overlay — fixed inset-0 z-50，底层瀑布流不销毁 */}
+      <DetailView />
     </DndContext>
   )
 }
