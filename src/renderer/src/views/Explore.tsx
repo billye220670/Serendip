@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { MasonryPhotoAlbum } from 'react-photo-album'
 import 'react-photo-album/masonry.css'
 import { useInView } from 'react-intersection-observer'
@@ -12,6 +12,8 @@ import { useCategoriesStore } from '../stores/categories'
 import { useGridSelection } from '../stores/selection'
 import { useDetailStore } from '../stores/detail'
 import { getColumns } from '../lib/grid'
+import { useSidebarFreeze } from '../lib/useSidebarFreeze'
+import { photoCellStyle } from '../lib/photoCell'
 import type { MediaItem } from '../../../main/recommender'
 
 const BATCH_SIZE = 30
@@ -46,6 +48,7 @@ export function ExploreView(): React.JSX.Element {
   const seenIdsRef = useRef<Set<number>>(new Set())
   const loadingRef = useRef(false)
   const hasMoreRef = useRef(true)
+  const freezeRef = useSidebarFreeze()
 
   // 多选（阶段 5）
   const {
@@ -238,13 +241,17 @@ export function ExploreView(): React.JSX.Element {
   )
 
   // 把 MediaItem 转换成 react-photo-album 接受的 Photo 形态
-  const photos: MediaPhoto[] = items.map((item) => ({
-    key: String(item.id),
-    src: `serendip://thumb/${item.id}`,
-    width: item.width || 4,
-    height: item.height || 3,
-    item
-  }))
+  const photos: MediaPhoto[] = useMemo(
+    () =>
+      items.map((item) => ({
+        key: String(item.id),
+        src: `serendip://thumb/${item.id}`,
+        width: item.width || 4,
+        height: item.height || 3,
+        item
+      })),
+    [items]
+  )
 
   if (items.length === 0 && loading) {
     return (
@@ -301,14 +308,14 @@ export function ExploreView(): React.JSX.Element {
     : []
 
   return (
-    <div className="p-4">
+    <div className="p-4" ref={freezeRef}>
       <MasonryPhotoAlbum
         photos={photos}
         columns={(containerWidth) => getColumns(containerWidth, gridSize)}
         spacing={12}
         render={{
           photo: (_props, { photo, width, height }) => (
-            <div style={{ width, height }}>
+            <div style={photoCellStyle(width, height)}>
               <MediaCard
                 item={(photo as MediaPhoto).item}
                 onLikeToggle={handleLikeToggle}

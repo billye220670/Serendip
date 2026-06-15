@@ -12,6 +12,8 @@ import { useUIStore } from '../stores/ui'
 import { useGridSelection } from '../stores/selection'
 import { useDetailStore } from '../stores/detail'
 import { getColumns } from '../lib/grid'
+import { useSidebarFreeze } from '../lib/useSidebarFreeze'
+import { photoCellStyle } from '../lib/photoCell'
 import type { MediaItem } from '../../../main/recommender'
 
 interface MediaPhoto {
@@ -60,6 +62,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<MediaItem | null>(null)
   const [confirmBatchRemove, setConfirmBatchRemove] = useState(false)
+  const freezeRef = useSidebarFreeze()
 
   // 多选（阶段 5）
   const {
@@ -193,13 +196,17 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     }
   }, [getSelectedIds, deselectAll, removeItems, categoryId, load])
 
-  const photos: MediaPhoto[] = items.map((item) => ({
-    key: String(item.id),
-    src: `serendip://thumb/${item.id}`,
-    width: item.width || 4,
-    height: item.height || 3,
-    item
-  }))
+  const photos: MediaPhoto[] = useMemo(
+    () =>
+      items.map((item) => ({
+        key: String(item.id),
+        src: `serendip://thumb/${item.id}`,
+        width: item.width || 4,
+        height: item.height || 3,
+        item
+      })),
+    [items]
+  )
 
   const menuItems: ContextMenuItem[] = menu
     ? [
@@ -226,7 +233,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     : []
 
   return (
-    <div className="p-4">
+    <div className="p-4" ref={freezeRef}>
       <div className="px-2 mb-3 flex items-baseline gap-3">
         <h2 className="text-lg font-semibold">{category?.name ?? '分类'}</h2>
         <span className="text-xs text-muted-foreground">
@@ -249,7 +256,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
           spacing={12}
           render={{
             photo: (_props, { photo, width, height }) => (
-              <div style={{ width, height }}>
+              <div style={photoCellStyle(width, height)}>
                 <MediaCard
                   item={(photo as MediaPhoto).item}
                   onLikeToggle={handleLikeToggle}

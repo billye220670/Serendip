@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, memo } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import { Heart, MoreVertical, Play, Check } from 'lucide-react'
 import clsx from 'clsx'
@@ -87,7 +87,7 @@ function releaseVideo(id: number, el: HTMLVideoElement): void {
   }
 }
 
-export function MediaCard({
+function MediaCardImpl({
   item,
   onLikeToggle,
   onContextMenu,
@@ -436,6 +436,13 @@ export function MediaCard({
     </div>
   )
 }
+
+/**
+ * 包 memo：瀑布流重排（如侧栏折叠动画 / 列宽变化）会让父级 render.photo 反复执行，
+ * 但卡片的 props（item + 各回调）都稳定，memo 可挡掉这些无谓重渲。
+ * 宽高只作用在外层定位 div 上，不进卡片，所以不会破坏 memo。
+ */
+export const MediaCard = memo(MediaCardImpl)
 
 function formatDuration(ms: number): string {
   const total = Math.floor(ms / 1000)

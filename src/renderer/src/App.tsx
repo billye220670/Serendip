@@ -439,7 +439,7 @@ function App(): React.JSX.Element {
         </aside>
 
         {/* 右侧主区域 */}
-        <main className="flex-1 flex flex-col min-w-0">
+        <main className="flex-1 flex flex-col min-w-0 overflow-x-clip">
           <header className="h-16 flex-shrink-0 sticky top-0 z-10 flex items-center px-6 border-b border-border gap-4 bg-glass backdrop-blur-xl">
             <button
               onClick={handleSelectRoot}

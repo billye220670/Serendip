@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { MasonryPhotoAlbum } from 'react-photo-album'
 import 'react-photo-album/masonry.css'
 import { Loader2, FolderOpen, HeartOff, Folder } from 'lucide-react'
@@ -11,6 +11,8 @@ import { useUIStore } from '../stores/ui'
 import { useGridSelection } from '../stores/selection'
 import { useDetailStore } from '../stores/detail'
 import { getColumns } from '../lib/grid'
+import { useSidebarFreeze } from '../lib/useSidebarFreeze'
+import { photoCellStyle } from '../lib/photoCell'
 import type { MediaItem } from '../../../main/recommender'
 
 interface MediaPhoto {
@@ -47,6 +49,7 @@ export function LikedView(): React.JSX.Element {
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(true)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const freezeRef = useSidebarFreeze()
 
   // 多选
   const {
@@ -175,13 +178,17 @@ export function LikedView(): React.JSX.Element {
     [getSelectedIds, deselectAll, addItemsToCategory]
   )
 
-  const photos: MediaPhoto[] = items.map((item) => ({
-    key: String(item.id),
-    src: `serendip://thumb/${item.id}`,
-    width: item.width || 4,
-    height: item.height || 3,
-    item
-  }))
+  const photos: MediaPhoto[] = useMemo(
+    () =>
+      items.map((item) => ({
+        key: String(item.id),
+        src: `serendip://thumb/${item.id}`,
+        width: item.width || 4,
+        height: item.height || 3,
+        item
+      })),
+    [items]
+  )
 
   const menuItems: ContextMenuItem[] = menu
     ? [
@@ -214,7 +221,7 @@ export function LikedView(): React.JSX.Element {
     : []
 
   return (
-    <div className="p-4">
+    <div className="p-4" ref={freezeRef}>
       <div className="px-2 mb-3 flex items-baseline gap-3">
         <h2 className="text-lg font-semibold">喜欢</h2>
         <span className="text-xs text-muted-foreground">
@@ -237,7 +244,7 @@ export function LikedView(): React.JSX.Element {
           spacing={12}
           render={{
             photo: (_props, { photo, width, height }) => (
-              <div style={{ width, height }}>
+              <div style={photoCellStyle(width, height)}>
                 <MediaCard
                   item={(photo as MediaPhoto).item}
                   onLikeToggle={handleLikeToggle}
