@@ -78,6 +78,10 @@ export const useDetailStore = create<DetailState>((set, get) => ({
         _jumpOnAppend: false,
         fetching: false,
       })
+      // 再追一批 —— 推荐面板（d）需要的是 sequence[cursor+1..] 这段。
+      // 仅这一轮追加里 cursor 之后通常只有 wrapped.length-1 张可推荐；
+      // 小目录场景甚至只有 0~1 张，面板会撑大量骨架。补这一刀让推荐池立即填厚。
+      void triggerPrefetch()
       return
     }
 
@@ -222,3 +226,11 @@ async function triggerPrefetch(): Promise<void> {
 }
 
 export { BUFFER_SIZE }
+
+/**
+ * 对外暴露：让推荐面板（d）触底时主动追加一批，不改 cursor。
+ * 内部已对 fetching 做幂等保护，重复调用安全。
+ */
+export function prefetchMore(): Promise<void> {
+  return triggerPrefetch()
+}

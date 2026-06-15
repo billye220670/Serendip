@@ -11,12 +11,15 @@ interface UIState {
   exploreMode: ExploreMode
   gridSize: GridSize
   sidebarCollapsed: boolean
+  /** 详情页 d 推荐面板的开关偏好（持久化跨会话记忆） */
+  detailPanelOpen: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setExploreMode: (mode: ExploreMode) => void
   /** 循环切换 小 → 中 → 大 → 小 */
   cycleGridSize: () => void
   toggleSidebar: () => void
+  toggleDetailPanel: () => void
 }
 
 const GRID_ORDER: GridSize[] = ['small', 'medium', 'large']
@@ -28,6 +31,7 @@ export const useUIStore = create<UIState>()(
       exploreMode: 'balanced',
       gridSize: 'medium',
       sidebarCollapsed: false,
+      detailPanelOpen: false,
 
       setTheme: (theme) => {
         set({ theme })
@@ -49,6 +53,8 @@ export const useUIStore = create<UIState>()(
         }),
 
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+
+      toggleDetailPanel: () => set((state) => ({ detailPanelOpen: !state.detailPanelOpen })),
     }),
     {
       name: 'serendip-ui',

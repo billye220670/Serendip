@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight } from 'lucide-react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useInView } from 'react-intersection-observer'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play } from 'lucide-react'
 import clsx from 'clsx'
-import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
+import { useDetailStore, prefetchMore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
+import { useUIStore } from '../stores/ui'
 import type { MediaItem } from '../../../main/recommender'
 
 /**
@@ -20,6 +22,8 @@ export function DetailView(): React.JSX.Element | null {
   const prev = useDetailStore((s) => s.prev)
   const jumpTo = useDetailStore((s) => s.jumpTo)
   const rootPath = useLibraryStore((s) => s.rootPath)
+  const panelOpen = useUIStore((s) => s.detailPanelOpen)
+  const togglePanel = useUIStore((s) => s.toggleDetailPanel)
 
   const currentItem = sequence[cursor]?.item ?? null
 
@@ -66,17 +70,19 @@ export function DetailView(): React.JSX.Element | null {
     }
   }, [next, prev])
 
-  // 键盘：Esc / ↑↓ / 空格
+  // 键盘：Esc / ←→ / 空格 / Tab。
+  // 用左右而非上下，与底部缩略图导航的左右排布心智对齐（→ 下一张，← 上一张）
   useEffect(() => {
     if (!isOpen) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') { close(); return }
-      if (e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); next() }
-      else if (e.key === 'ArrowUp') { e.preventDefault(); prev() }
+      if (e.key === 'Tab') { e.preventDefault(); togglePanel(); return }
+      if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next() }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); prev() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isOpen, close, next, prev])
+  }, [isOpen, close, next, prev, togglePanel])
 
   if (!isOpen && !visible) return null
   if (!currentItem) return null
@@ -84,43 +90,65 @@ export function DetailView(): React.JSX.Element | null {
   return (
     <div
       className={clsx(
-        'fixed inset-0 z-50 bg-black flex flex-col items-center justify-center',
+        'fixed inset-0 z-50 bg-black flex flex-row',
         'transition-opacity duration-300',
         visible ? 'opacity-100' : 'opacity-0'
       )}
       onWheel={handleWheel}
     >
-      {/* 顶部黑色渐变遮罩：从顶部向下淡出，提升面包屑/按钮在亮图上的可读性 */}
-      <div className="absolute top-0 left-0 right-0 h-28 z-10 pointer-events-none bg-gradient-to-b from-black/75 via-black/40 to-transparent" />
+      {/* 左区（主舞台）：relative 让顶栏渐变 / 顶栏 / 缩略图条以 absolute 锚到左区。
+          flex-1 + min-w-0 让右侧面板挤压时宽度自然让出 */}
+      <div className="relative flex-1 min-w-0 flex flex-col items-center justify-center">
+        {/* 顶部黑色渐变遮罩：从顶部向下淡出，提升面包屑/按钮在亮图上的可读性 */}
+        <div className="absolute top-0 left-0 right-0 h-28 z-10 pointer-events-none bg-gradient-to-b from-black/75 via-black/40 to-transparent" />
 
-      {/* 顶栏：后退 + 面包屑 */}
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-3 px-4 py-3">
-        <button
-          onClick={close}
-          aria-label="后退"
-          className="flex-shrink-0 grid place-items-center w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors"
-        >
-          <ChevronLeft className="w-6 h-6" />
-        </button>
-        <Breadcrumb
-          item={currentItem}
-          rootPath={rootPath}
-          scopePath={scopePath}
-          onSetScope={setScope}
-        />
+        {/* 顶栏：后退 + 面包屑 + 面板开关。right-0 即左区右边界，按钮自然贴近面板 */}
+        <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-3 px-4 py-3">
+          <button
+            onClick={close}
+            aria-label="后退"
+            className="flex-shrink-0 grid place-items-center w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors focus:outline-none focus-visible:outline-none"
+          >
+            <ChevronLeft className="w-6 h-6" />
+          </button>
+          <div className="flex-1 min-w-0">
+            <Breadcrumb
+              item={currentItem}
+              rootPath={rootPath}
+              scopePath={scopePath}
+              onSetScope={setScope}
+            />
+          </div>
+          <button
+            onClick={togglePanel}
+            aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
+            title={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'}
+            className="flex-shrink-0 grid place-items-center w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors focus:outline-none focus-visible:outline-none"
+          >
+            {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
+          </button>
+        </div>
+
+        {/* 内容区（瞬切，无位移动效）。父容器宽度随面板挤压收缩，img 自动 fit */}
+        <div className="w-full h-full flex items-center justify-center">
+          {currentItem.type === 'video' ? (
+            <VideoPlayer item={currentItem} />
+          ) : (
+            <ImageViewer item={currentItem} />
+          )}
+        </div>
+
+        {/* 底部缩略图条：left-1/2 相对左区中点，挤压后随之向左居中 */}
+        <ThumbStrip sequence={sequence} cursor={cursor} jumpTo={jumpTo} />
       </div>
 
-      {/* 内容区（瞬切，无位移动效） */}
-      <div className="w-full h-full flex items-center justify-center">
-        {currentItem.type === 'video' ? (
-          <VideoPlayer item={currentItem} />
-        ) : (
-          <ImageViewer item={currentItem} />
-        )}
-      </div>
-
-      {/* 底部缩略图条 */}
-      <ThumbStrip sequence={sequence} cursor={cursor} jumpTo={jumpTo} />
+      {/* 右侧推荐面板（d）— 挤压布局：宽度受 open 切换 0/PANEL_WIDTH，width 动画收展 */}
+      <RecommendationsPanel
+        sequence={sequence}
+        cursor={cursor}
+        open={panelOpen}
+        jumpTo={jumpTo}
+      />
 
       {/* 预加载下 1-2 张图（不可见） */}
       <Preloader sequence={sequence} cursor={cursor} />
@@ -357,7 +385,7 @@ function ThumbStrip({
             <div
               className={clsx(
                 'relative w-full h-full rounded overflow-hidden',
-                isCurrent && 'ring-2 ring-white/90'
+                isCurrent && 'ring-2 ring-primary'
               )}
             >
               <img
@@ -403,6 +431,234 @@ function Preloader({
       )}
     </div>
   )
+}
+
+/**
+ * 右侧推荐面板（d） — 双列瀑布流（挤压布局）。
+ *
+ * 布局：作为顶层 flex 行的右侧子项，撑满全高；宽度由 open 切换 0 ↔ PANEL_WIDTH，
+ *      整体大图区随之让出宽度。展开/收起走 width transition，250ms。
+ * 内容：双列 grid，每张卡固定 3:4，图片用 absolute inset-0 + object-cover 充满，
+ *      因此「占位骨架」与「真实卡片」尺寸完全一致 —— 防抖刷新瞬间整面板的占位先以
+ *      shimmer 显示，图片各自异步到位后再淡入。
+ * 数据源：`sequence` 中 cursor 之后的项（与接力队列共享）。
+ * 防抖：cursor 变化后延迟 REFRESH_DELAY 才把 next 切片提交到 displayed。
+ *      首次打开 + 有数据时立即填充，避免「打开就空一段」。
+ * 触底：useInView 末尾哨兵触发 prefetchMore() 追加更多。
+ * 转场：用 width 而不是 visibility/卸载，保留内部 React 状态；overflow-hidden 让收
+ *      起过程内容自然裁掉。
+ */
+/**
+ * 右侧推荐面板（d） — 双列瀑布流（挤压布局）。
+ *
+ * 布局：作为顶层 flex 行的右侧子项，撑满全高；宽度由 open 切换 0 ↔ PANEL_WIDTH，
+ *      整体大图区随之让出宽度。展开/收起走 width transition，250ms。
+ * 内容：双列 grid，每张卡固定 3:4，图片用 absolute inset-0 + object-cover 充满。
+ * 数据源：`sequence` 中 cursor 之后的项（与接力队列共享）。
+ * 视觉：不再使用骨架占位 —— cursor 切换瞬间把 displayed 清空（面板真的空着），
+ *      短防抖后填入 target，每张卡 mount 时自身做一次 fade+1px 上移（pop in）。
+ *      图片到位由 <img onLoad> 各自淡入，本来就是一张张错峰出现，不需要再人工 stagger。
+ *      没图就是真没图（不再骗用户「快来了」）。
+ * 触底：useInView 末尾哨兵触发 prefetchMore() 追加更多。
+ * 转场：用 width 而不是 visibility/卸载，保留内部 React 状态；overflow-hidden 让收
+ *      起过程内容自然裁掉。
+ */
+const REFRESH_DELAY = 150 // cursor 切换后的短防抖：吃掉连续滚动期间的重复刷
+const PANEL_DISPLAY_COUNT = 12
+const PANEL_WIDTH = 320 // 双列 + 间距 + 内边距下的舒适宽度
+
+function RecommendationsPanel({
+  sequence,
+  cursor,
+  open,
+  jumpTo,
+}: {
+  sequence: SeqEntry[]
+  cursor: number
+  open: boolean
+  jumpTo: (index: number) => void
+}): React.JSX.Element {
+  // 防抖后展示的 entries（连同其在 sequence 中的下标，便于点击跳转）
+  type DisplayEntry = { key: number; index: number; item: MediaItem }
+  const [displayed, setDisplayed] = useState<DisplayEntry[]>([])
+
+  // 用 ref 跟踪当前 displayed 的 key 序列，让 effect 能比对「target 是不是 displayed 的前缀延长」
+  // 而不把 displayed 作为依赖（避免 setDisplayed → 自触发循环）
+  const displayedRef = useRef<DisplayEntry[]>([])
+  displayedRef.current = displayed
+
+  // 首屏直出：第一次面板展开 + 有数据时立即显示，不要等防抖
+  const hasInitializedRef = useRef(false)
+
+  // 计算「应该展示的列表」—— sequence 中 cursor 之后的项，按 mediaId 去重。
+  // sequence 在小目录场景下会重复同一张图作为「副本」让接力队列继续增长（缩略图条 /
+  // 滚轮无限往下滚的心智依赖这个特性），但 d 面板的语义是「相关推荐」，同一张图重复
+  // 12 次毫无意义 —— 这里按 item.id 去重，最多取 PANEL_DISPLAY_COUNT 张唯一图。
+  const target: DisplayEntry[] = useMemo(() => {
+    const arr: DisplayEntry[] = []
+    const seenIds = new Set<number>()
+    for (let i = cursor + 1; i < sequence.length; i++) {
+      const e = sequence[i]
+      if (seenIds.has(e.item.id)) continue
+      seenIds.add(e.item.id)
+      arr.push({ key: e.key, index: i, item: e.item })
+      if (arr.length >= PANEL_DISPLAY_COUNT) break
+    }
+    return arr
+  }, [sequence, cursor])
+
+  // 刷新策略 —— 区分两种场景：
+  //   (1) target 是 displayed 的前缀延长（cursor 没动，prefetchMore 追加） → 直接追加，已显示卡不动
+  //   (2) 真正的内容切换（cursor 变化或 sequence 中段被改写） → 立即清空，REFRESH_DELAY 后置入 target，
+  //       新卡 mount 时自身的 fade-in 即「pop in」效果
+  useEffect(() => {
+    if (!open) return
+
+    const cur = displayedRef.current
+    const isPrefixExtension =
+      cur.length > 0 &&
+      target.length >= cur.length &&
+      cur.every((d, i) => target[i] && target[i].key === d.key)
+
+    if (isPrefixExtension) {
+      // 末尾延长：只追加多出来的部分；新卡自身有 mount 动效，单张「pop」进来
+      if (target.length > cur.length) {
+        setDisplayed(target)
+      }
+      return
+    }
+
+    if (!hasInitializedRef.current) {
+      // 首次：立即填充
+      setDisplayed(target)
+      hasInitializedRef.current = true
+      return
+    }
+
+    // 内容切换：先空一帧（面板真的空着，不显占位），防抖后置入新数据
+    setDisplayed([])
+    const timer = window.setTimeout(() => setDisplayed(target), REFRESH_DELAY)
+    return () => window.clearTimeout(timer)
+  }, [target, open])
+
+  // 面板关闭时重置首次标记，下次打开仍然立即填充
+  useEffect(() => {
+    if (!open) hasInitializedRef.current = false
+  }, [open])
+
+  // 触底加载：当 displayed 接近 target 末尾时调推荐 store 再抽一批
+  const { ref: bottomRef, inView: bottomInView } = useInView({ rootMargin: '200px' })
+  useEffect(() => {
+    if (!open) return
+    if (bottomInView) void prefetchMore()
+  }, [bottomInView, open])
+
+  return (
+    <aside
+      className={clsx(
+        'relative flex-shrink-0 h-full overflow-hidden',
+        'bg-black/40 backdrop-blur-md border-l border-white/10',
+        'transition-[width] duration-[250ms] ease-out'
+      )}
+      style={{ width: open ? PANEL_WIDTH : 0 }}
+      aria-hidden={!open}
+      // 防滚轮穿透：面板内滚动只用于浏览推荐列表，不应触发外层切大图
+      onWheel={(e) => e.stopPropagation()}
+    >
+      {/* 内层固定宽度，避免收起动画过程中 grid 列宽随父宽度抖动 */}
+      <div className="h-full flex flex-col" style={{ width: PANEL_WIDTH }}>
+        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between flex-shrink-0">
+          <span className="text-sm font-medium text-white/85">相关推荐</span>
+          <span className="text-xs text-white/40 tabular-nums">
+            {displayed.length > 0 ? `${displayed.length} 张` : ''}
+          </span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-3 py-3 scroll-smooth">
+          <div className="grid grid-cols-2 gap-2.5">
+            {displayed.map((entry) => (
+              <RecommendationItem
+                key={entry.key}
+                entry={entry}
+                onClick={() => jumpTo(entry.index)}
+              />
+            ))}
+          </div>
+          {displayed.length > 0 && <div ref={bottomRef} className="h-1" />}
+        </div>
+      </div>
+    </aside>
+  )
+}
+
+/** d 面板单卡：固定 3:4，缩略图 absolute 充满、onLoad 淡入；视频右上角 Play 角标 + 右下时长。
+ *  小卡密度高 + 同屏多卡 + 用户视线在大图，刻意不做 hover-play —— 视频缩略图（webp）已经
+ *  足够识别，避开主瀑布流踩过的 video 元素并发坑。
+ *  容器自身 mount 后下一帧切到 visible，触发 fade+1px 上移 ——「pop in」效果。
+ *  本地 webp 缩略图通常已被 OS 缓存，<img> 的 onLoad 几乎与 mount 同步，不会先看见空底色再看见图。
+ */
+function RecommendationItem({
+  entry,
+  onClick,
+}: {
+  entry: { key: number; index: number; item: MediaItem }
+  onClick: () => void
+}): React.JSX.Element {
+  const [imgError, setImgError] = useState(false)
+  // 容器进入动效：mount 后下一帧切到 visible，触发 transition
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setVisible(true))
+    return () => cancelAnimationFrame(raf)
+  }, [])
+  const isVideo = entry.item.type === 'video'
+
+  return (
+    <button
+      onClick={onClick}
+      className={clsx(
+        'relative w-full overflow-hidden rounded-md hover:ring-2 hover:ring-white/40 focus:outline-none',
+        'transition-[opacity,transform] duration-200 ease-out',
+        visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'
+      )}
+      style={{ aspectRatio: '3 / 4' }}
+    >
+      {imgError ? (
+        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/40 bg-white/5">
+          加载失败
+        </div>
+      ) : (
+        <img
+          src={`serendip://thumb/${entry.item.id}`}
+          alt=""
+          loading="lazy"
+          draggable={false}
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={() => setImgError(true)}
+        />
+      )}
+      {isVideo && !imgError && (
+        <>
+          <div className="absolute top-1.5 right-1.5 grid place-items-center w-6 h-6 rounded-full bg-black/55 backdrop-blur">
+            <Play className="w-3 h-3 text-white fill-white" />
+          </div>
+          {entry.item.duration_ms && (
+            <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 text-[10px] leading-none bg-black/60 backdrop-blur rounded text-white tabular-nums">
+              {formatDuration(entry.item.duration_ms)}
+            </div>
+          )}
+        </>
+      )}
+    </button>
+  )
+}
+
+/** mm:ss 格式化（毫秒 → 时长） */
+function formatDuration(ms: number): string {
+  const total = Math.floor(ms / 1000)
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
 }
 
 /**
@@ -472,7 +728,7 @@ function Breadcrumb({
               onDoubleClick={(e) => { e.stopPropagation(); void window.api.openFolder(rootSegPath) }}
               onAuxClick={(e) => { if (e.button === 1) { e.stopPropagation(); void window.api.openFolder(rootSegPath) } }}
               className={clsx(
-                'px-1 py-0.5 rounded font-semibold transition-colors',
+                'px-1 py-0.5 rounded font-semibold transition-colors focus:outline-none focus-visible:outline-none',
                 isActive ? 'text-primary' : 'text-white/85 hover:text-white'
               )}
             >
@@ -497,7 +753,7 @@ function Breadcrumb({
               onDoubleClick={(e) => { e.stopPropagation(); void window.api.openFolder(absPath) }}
               onAuxClick={(e) => { if (e.button === 1) { e.stopPropagation(); void window.api.openFolder(absPath) } }}
               className={clsx(
-                'px-1 py-0.5 rounded font-semibold transition-colors',
+                'px-1 py-0.5 rounded font-semibold transition-colors focus:outline-none focus-visible:outline-none',
                 isActive ? 'text-primary' : 'text-white/85 hover:text-white'
               )}
             >
