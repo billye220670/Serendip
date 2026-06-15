@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Heart, Hash } from 'lucide-react'
 import clsx from 'clsx'
 import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
 import { usePanelRecommendationsStore } from '../stores/panelRecommendations'
+import { useCategoriesStore } from '../stores/categories'
+import { CategorySearchPanel } from '../components/CategorySearchPanel'
 import type { MediaItem } from '../../../main/recommender'
 
 /**
@@ -29,6 +31,80 @@ export function DetailView(): React.JSX.Element | null {
   const currentItem = sequence[cursor]?.item ?? null
   const resetPanel = usePanelRecommendationsStore((s) => s.reset)
   const destroyPanel = usePanelRecommendationsStore((s) => s.destroy)
+  const loadStats = useLibraryStore((s) => s.loadStats)
+
+  // ===== f/g 状态：喜欢 + 分类归属 =====
+  const categories = useCategoriesStore((s) => s.categories)
+  const loadCategories = useCategoriesStore((s) => s.load)
+  const addItemsToCategory = useCategoriesStore((s) => s.addItems)
+  const removeItemsFromCategory = useCategoriesStore((s) => s.removeItems)
+  const createCategory = useCategoriesStore((s) => s.create)
+
+  const [itemLiked, setItemLiked] = useState(false)
+  const [itemCategoryIds, setItemCategoryIds] = useState<Set<number>>(new Set())
+  const [searchOpen, setSearchOpen] = useState(false)
+
+  // 打开详情页时确保分类列表已加载
+  useEffect(() => {
+    if (isOpen && !useCategoriesStore.getState().loaded) {
+      void loadCategories()
+    }
+  }, [isOpen, loadCategories])
+
+  // 切图时刷新 liked + categoryIds
+  useEffect(() => {
+    if (!currentItem) {
+      setItemLiked(false)
+      setItemCategoryIds(new Set())
+      return
+    }
+    setItemLiked(!!currentItem.liked)
+    void window.api.getFileCategoryIds(currentItem.id).then((ids) => {
+      setItemCategoryIds(new Set(ids))
+    })
+  }, [currentItem?.id])
+
+  // 切图时关闭搜索面板
+  useEffect(() => {
+    setSearchOpen(false)
+  }, [currentItem?.id])
+
+  const handleLikeToggle = useCallback(async () => {
+    if (!currentItem) return
+    const newLiked = !itemLiked
+    setItemLiked(newLiked)
+    await window.api.setLiked(currentItem.id, newLiked)
+    await loadStats()
+  }, [currentItem, itemLiked, loadStats])
+
+  const handleCategoryToggle = useCallback(
+    async (categoryId: number) => {
+      if (!currentItem) return
+      const isIn = itemCategoryIds.has(categoryId)
+      setItemCategoryIds((prev) => {
+        const next = new Set(prev)
+        if (isIn) next.delete(categoryId)
+        else next.add(categoryId)
+        return next
+      })
+      if (isIn) {
+        await removeItemsFromCategory(categoryId, [currentItem.id])
+      } else {
+        await addItemsToCategory(categoryId, [currentItem.id])
+      }
+    },
+    [currentItem, itemCategoryIds, addItemsToCategory, removeItemsFromCategory]
+  )
+
+  const handleCategoryCreate = useCallback(
+    async (name: string) => {
+      if (!currentItem) return
+      const newId = await createCategory(name)
+      setItemCategoryIds((prev) => new Set([...prev, newId]))
+      await addItemsToCategory(newId, [currentItem.id])
+    },
+    [currentItem, createCategory, addItemsToCategory]
+  )
 
   // 面板数据 reset：folder_path 变化时触发（同路径下切换图不重置）
   useEffect(() => {
@@ -92,14 +168,19 @@ export function DetailView(): React.JSX.Element | null {
   useEffect(() => {
     if (!isOpen) return
     const handler = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') { close(); return }
+      if (e.key === 'Escape') {
+        if (searchOpen) { setSearchOpen(false); return }
+        close()
+        return
+      }
+      if (searchOpen) return
       if (e.key === 'Tab') { e.preventDefault(); togglePanel(); return }
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next() }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); prev() }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isOpen, close, next, prev, togglePanel])
+  }, [isOpen, searchOpen, close, next, prev, togglePanel])
 
   if (!isOpen && !visible) return null
   if (!currentItem) return null
@@ -157,6 +238,62 @@ export function DetailView(): React.JSX.Element | null {
 
         {/* 底部缩略图条：left-1/2 相对左区中点，挤压后随之向左居中 */}
         <ThumbStrip sequence={sequence} cursor={cursor} jumpTo={jumpTo} />
+
+        {/* 底部左侧操作区：喜欢(f) + 分隔线 + 分类入口(h)，不与缩略图条争位 */}
+        <div className="absolute bottom-6 left-4 z-20 flex items-center gap-2">
+          {/* f：喜欢 */}
+          <button
+            onClick={() => { void handleLikeToggle() }}
+            aria-label={itemLiked ? '取消喜欢' : '喜欢'}
+            className={clsx(
+              'grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none',
+              itemLiked
+                ? 'bg-pink-500/90 text-white hover:bg-pink-400/90'
+                : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+            )}
+          >
+            <Heart className={clsx('w-5 h-5', itemLiked && 'fill-current')} />
+          </button>
+
+          <div className="w-px h-6 bg-white/25" />
+
+          {/* h：# 按钮，relative 用于面板锚定 */}
+          <div className="relative">
+            <button
+              onClick={() => setSearchOpen((v) => !v)}
+              aria-label="管理分类"
+              title="管理分类"
+              className={clsx(
+                'grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none',
+                searchOpen
+                  ? 'bg-primary text-white'
+                  : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+              )}
+            >
+              <Hash className="w-5 h-5" />
+            </button>
+
+            {/* 分类搜索面板：absolute bottom-full，锚定在 # 按钮上方 */}
+            {searchOpen && (
+              <CategorySearchPanel
+                fileId={currentItem.id}
+                categories={categories}
+                memberIds={itemCategoryIds}
+                onToggle={handleCategoryToggle}
+                onCreate={handleCategoryCreate}
+                onClose={() => setSearchOpen(false)}
+              />
+            )}
+          </div>
+        </div>
+
+        {/* 面板打开时的透明点击捕获层（点面板外区域关闭，z-[19] 低于操作区 z-20） */}
+        {searchOpen && (
+          <div
+            className="absolute inset-0 z-[19]"
+            onClick={() => setSearchOpen(false)}
+          />
+        )}
       </div>
 
       {/* 右侧推荐面板（d）— 挤压布局：宽度受 open 切换 0/PANEL_WIDTH，width 动画收展 */}
