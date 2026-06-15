@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { ArrowLeft, ImageOff, VideoOff } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
-import { useDetailStore, BUFFER_SIZE } from '../stores/detail'
+import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
+import { useLibraryStore } from '../stores/library'
 import type { MediaItem } from '../../../main/recommender'
 
 /**
@@ -12,12 +13,15 @@ export function DetailView(): React.JSX.Element | null {
   const isOpen = useDetailStore((s) => s.isOpen)
   const sequence = useDetailStore((s) => s.sequence)
   const cursor = useDetailStore((s) => s.cursor)
+  const scopePath = useDetailStore((s) => s.scopePath)
+  const setScope = useDetailStore((s) => s.setScope)
   const close = useDetailStore((s) => s.close)
   const next = useDetailStore((s) => s.next)
   const prev = useDetailStore((s) => s.prev)
   const jumpTo = useDetailStore((s) => s.jumpTo)
+  const rootPath = useLibraryStore((s) => s.rootPath)
 
-  const currentItem = sequence[cursor] ?? null
+  const currentItem = sequence[cursor]?.item ?? null
 
   // 转场：isOpen 变化后延一帧驱动 CSS opacity/transform
   const [visible, setVisible] = useState(false)
@@ -25,9 +29,9 @@ export function DetailView(): React.JSX.Element | null {
     if (isOpen) {
       const raf = requestAnimationFrame(() => setVisible(true))
       return () => cancelAnimationFrame(raf)
-    } else {
-      setVisible(false)
     }
+    setVisible(false)
+    return undefined
   }, [isOpen])
 
   // 打开时锁定 body 滚动，防止滚轮穿透到底层瀑布流
@@ -37,6 +41,7 @@ export function DetailView(): React.JSX.Element | null {
       document.body.style.overflow = 'hidden'
       return () => { document.body.style.overflow = prev }
     }
+    return undefined
   }, [isOpen])
 
   // 滚轮：基于 deltaY 累积，每达到 WHEEL_THRESHOLD 才切一张。
@@ -85,14 +90,25 @@ export function DetailView(): React.JSX.Element | null {
       )}
       onWheel={handleWheel}
     >
-      {/* 后退按钮 */}
-      <button
-        onClick={close}
-        className="absolute top-4 left-4 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-sm transition-colors backdrop-blur-sm"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        <span>后退</span>
-      </button>
+      {/* 顶部黑色渐变遮罩：从顶部向下淡出，提升面包屑/按钮在亮图上的可读性 */}
+      <div className="absolute top-0 left-0 right-0 h-28 z-10 pointer-events-none bg-gradient-to-b from-black/75 via-black/40 to-transparent" />
+
+      {/* 顶栏：后退 + 面包屑 */}
+      <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-3 px-4 py-3">
+        <button
+          onClick={close}
+          aria-label="后退"
+          className="flex-shrink-0 grid place-items-center w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors"
+        >
+          <ChevronLeft className="w-6 h-6" />
+        </button>
+        <Breadcrumb
+          item={currentItem}
+          rootPath={rootPath}
+          scopePath={scopePath}
+          onSetScope={setScope}
+        />
+      </div>
 
       {/* 内容区（瞬切，无位移动效） */}
       <div className="w-full h-full flex items-center justify-center">
@@ -241,36 +257,37 @@ function VideoPlayer({ item }: { item: MediaItem }): React.JSX.Element {
  * - 'entering' 第一帧 width=0，下一帧切到 'in'（width=2.5rem），CSS transition 自然滑入。
  * - 'leaving' 把目标值改回 0，transition 滑出；onTransitionEnd 各自从 DOM 移除。
  */
-const THUMB_W_PX = 40
-const THUMB_GAP_PX = 6
+const THUMB_W_PX = 52
+const THUMB_GAP_PX = 7
 
 function ThumbStrip({
   sequence,
   cursor,
   jumpTo,
 }: {
-  sequence: MediaItem[]
+  sequence: SeqEntry[]
   cursor: number
   jumpTo: (index: number) => void
 }): React.JSX.Element | null {
-  const currentItem = sequence[cursor] ?? null
+  const current = sequence[cursor] ?? null
 
   type Phase = 'entering' | 'in' | 'leaving'
-  type Entry = { id: number; phase: Phase }
+  // key = SeqEntry.key（序列内唯一，可重复同一 mediaId）；mediaId 仅用于取缩略图
+  type Entry = { key: number; mediaId: number; phase: Phase }
 
   const [entries, setEntries] = useState<Entry[]>(() =>
-    currentItem ? [{ id: currentItem.id, phase: 'in' }] : []
+    current ? [{ key: current.key, mediaId: current.item.id, phase: 'in' }] : []
   )
 
-  // 每次 currentItem 变化，把它纳入条目（顺序：保留已有 + 当前在最右）
+  // 每次 current 变化，把它纳入条目（顺序：保留已有 + 当前在最右）
   useEffect(() => {
-    if (!currentItem) return
+    if (!current) return
     setEntries((prev) => {
-      const aliveIds = new Set(prev.filter((e) => e.phase !== 'leaving').map((e) => e.id))
+      const aliveKeys = new Set(prev.filter((e) => e.phase !== 'leaving').map((e) => e.key))
       let next: Entry[] = prev
 
-      if (!aliveIds.has(currentItem.id)) {
-        next = [...prev, { id: currentItem.id, phase: 'entering' }]
+      if (!aliveKeys.has(current.key)) {
+        next = [...prev, { key: current.key, mediaId: current.item.id, phase: 'entering' }]
       }
       // 否则当前项已在条目里（回滚到历史项），只更新高亮即可，无结构变化
 
@@ -290,7 +307,7 @@ function ThumbStrip({
 
       return next
     })
-  }, [currentItem])
+  }, [current])
 
   // entering → in：下一帧切相，触发 width transition
   useEffect(() => {
@@ -303,26 +320,26 @@ function ThumbStrip({
     return () => cancelAnimationFrame(raf)
   }, [entries])
 
-  if (!currentItem) return null
+  if (!current) return null
 
-  // 通过 id 反查 sequence 中的下标（用于点击跳转）
-  const idToIndex = new Map<number, number>()
-  for (let i = 0; i < sequence.length; i++) idToIndex.set(sequence[i].id, i)
+  // 通过 key 反查 sequence 中的下标（用于点击跳转）
+  const keyToIndex = new Map<number, number>()
+  for (let i = 0; i < sequence.length; i++) keyToIndex.set(sequence[i].key, i)
 
   return (
     <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex z-10">
-      {entries.map(({ id, phase }) => {
-        const isCurrent = id === currentItem.id
+      {entries.map(({ key, mediaId, phase }) => {
+        const isCurrent = key === current.key
         const collapsed = phase === 'entering' || phase === 'leaving'
-        const targetIndex = idToIndex.get(id)
+        const targetIndex = keyToIndex.get(key)
         return (
           <button
-            key={id}
+            key={key}
             onClick={() => {
               if (phase !== 'in') return
               if (targetIndex !== undefined) jumpTo(targetIndex)
             }}
-            className="thumb-strip-item h-10 rounded focus:outline-none"
+            className="thumb-strip-item h-[52px] rounded focus:outline-none"
             style={{
               width: collapsed ? 0 : THUMB_W_PX,
               marginRight: collapsed ? 0 : THUMB_GAP_PX,
@@ -333,23 +350,28 @@ function ThumbStrip({
               if (e.propertyName !== 'width') return
               if (phase !== 'leaving') return
               setEntries((prev) =>
-                prev.filter((x) => !(x.id === id && x.phase === 'leaving'))
+                prev.filter((x) => !(x.key === key && x.phase === 'leaving'))
               )
             }}
           >
             <div
               className={clsx(
-                'w-full h-full rounded overflow-hidden transition-opacity duration-200',
-                isCurrent
-                  ? 'opacity-100 ring-2 ring-white ring-offset-1 ring-offset-black/50'
-                  : 'opacity-35 hover:opacity-60'
+                'relative w-full h-full rounded overflow-hidden',
+                isCurrent && 'ring-2 ring-white/90'
               )}
             >
               <img
-                src={`serendip://thumb/${id}`}
+                src={`serendip://thumb/${mediaId}`}
                 alt=""
                 className="w-full h-full object-cover"
                 draggable={false}
+              />
+              {/* 用明暗 tint（而非透明度）区分高亮：非当前项盖一层黑，差异大但暗图仍可辨 */}
+              <div
+                className={clsx(
+                  'absolute inset-0 transition-colors duration-200',
+                  isCurrent ? 'bg-transparent' : 'bg-black/60 hover:bg-black/35'
+                )}
               />
             </div>
           </button>
@@ -364,21 +386,135 @@ function Preloader({
   sequence,
   cursor,
 }: {
-  sequence: MediaItem[]
+  sequence: SeqEntry[]
   cursor: number
 }): React.JSX.Element {
   const preloadItems = sequence.slice(cursor + 1, cursor + 3)
   return (
     <div className="sr-only" aria-hidden>
-      {preloadItems.map((item) =>
-        item.type === 'image' ? (
+      {preloadItems.map((e) =>
+        e.item.type === 'image' ? (
           <img
-            key={item.id}
-            src={`serendip://image/${item.id}`}
+            key={e.key}
+            src={`serendip://image/${e.item.id}`}
             alt=""
           />
         ) : null
       )}
+    </div>
+  )
+}
+
+/**
+ * 面包屑组件：显示当前图从 rootPath 起的各级目录，可点击收窄/扩大抽样范围。
+ *
+ * - rootPath 以上的部分（如盘符、系统路径）灰掉、不可点
+ * - rootPath 本身作为根节点可点（收窄到全局范围 = null）
+ * - 当前 scopePath 对应的 segment 高亮
+ * - 点击某段 → setScope 切换，接力流随之刷新
+ */
+function Breadcrumb({
+  item,
+  rootPath,
+  scopePath,
+  onSetScope,
+}: {
+  item: MediaItem
+  rootPath: string | null
+  scopePath: string | null
+  onSetScope: (path: string | null) => void
+}): React.JSX.Element | null {
+  if (!rootPath) return null
+
+  // 统一用正斜杠做处理，最终显示保留原始 segment 文本
+  const normalize = (p: string): string => p.replace(/\\/g, '/')
+  const normRoot = normalize(rootPath).replace(/\/$/, '')
+  const normFolder = normalize(item.folder_path).replace(/\/$/, '')
+
+  // rootPath 以上的段（只展示，灰化不可点）
+  const rootParts = normRoot.split('/').filter(Boolean)
+  // rootPath 以下的相对段
+  const relPath = normFolder.startsWith(normRoot)
+    ? normFolder.slice(normRoot.length).replace(/^\//, '')
+    : ''
+  const relParts = relPath ? relPath.split('/').filter(Boolean) : []
+
+  // 重建每段对应的绝对路径（用原始分隔符）
+  const sep = rootPath.includes('\\') ? '\\' : '/'
+  // 根节点路径 = rootPath（无末尾斜杠）
+  const rootSegPath = rootPath.replace(/[/\\]$/, '')
+
+  // 构建每个 relPart 的累积绝对路径
+  const relAbsPaths: string[] = relParts.map((_, i) => {
+    const sub = relParts.slice(0, i + 1).join(sep)
+    return rootSegPath + sep + sub
+  })
+
+  const normScopePath = scopePath ? normalize(scopePath).replace(/\/$/, '') : null
+
+  return (
+    <div className="flex items-center flex-wrap gap-0 min-w-0 text-lg select-none">
+      {/* rootPath 以上：灰化、半透、不可点、不加粗 */}
+      {rootParts.map((seg, i) => (
+        <span key={`above-${i}`} className="flex items-center">
+          <span className="font-normal text-white/30 px-1">{seg}</span>
+          <ChevronRight className="w-4 h-4 text-white/25 flex-shrink-0" />
+        </span>
+      ))}
+
+      {/* rootPath 本身：可点（scope = null 表示全局范围） */}
+      {(() => {
+        const isActive = normScopePath === normRoot
+        return (
+          <span className="flex items-center">
+            <button
+              onClick={() => onSetScope(rootSegPath)}
+              onDoubleClick={(e) => { e.stopPropagation(); void window.api.openFolder(rootSegPath) }}
+              onAuxClick={(e) => { if (e.button === 1) { e.stopPropagation(); void window.api.openFolder(rootSegPath) } }}
+              className={clsx(
+                'px-1 py-0.5 rounded font-semibold transition-colors',
+                isActive ? 'text-primary' : 'text-white/85 hover:text-white'
+              )}
+            >
+              {rootParts[rootParts.length - 1] ?? rootSegPath}
+            </button>
+            {relParts.length > 0 && (
+              <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0" />
+            )}
+          </span>
+        )
+      })()}
+
+      {/* rootPath 以下各级：可点 */}
+      {relParts.map((seg, i) => {
+        const absPath = relAbsPaths[i]
+        const normAbs = normalize(absPath).replace(/\/$/, '')
+        const isActive = normScopePath === normAbs
+        return (
+          <span key={`rel-${i}`} className="flex items-center">
+            <button
+              onClick={() => onSetScope(absPath)}
+              onDoubleClick={(e) => { e.stopPropagation(); void window.api.openFolder(absPath) }}
+              onAuxClick={(e) => { if (e.button === 1) { e.stopPropagation(); void window.api.openFolder(absPath) } }}
+              className={clsx(
+                'px-1 py-0.5 rounded font-semibold transition-colors',
+                isActive ? 'text-primary' : 'text-white/85 hover:text-white'
+              )}
+            >
+              {seg}
+            </button>
+            <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0" />
+          </span>
+        )
+      })}
+
+      {/* 文件名（leaf，仅展示，不可点、不加粗、半透） */}
+      {(() => {
+        const filename = item.path.replace(/\\/g, '/').split('/').pop() ?? ''
+        return (
+          <span className="font-normal text-white/40 px-1">{filename}</span>
+        )
+      })()}
     </div>
   )
 }

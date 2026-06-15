@@ -200,12 +200,12 @@ async function serveFullImage(filePath: string): Promise<Response> {
         } catch { /* ignore */ }
       })()
     }
-    return new Response(buf, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache' } })
+    return new Response(new Uint8Array(buf), { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-cache' } })
   }
 
   const mime = IMAGE_MIME[ext] ?? 'application/octet-stream'
   const buf = await readFile(filePath)
-  return new Response(buf, { headers: { 'Content-Type': mime, 'Cache-Control': 'no-cache' } })
+  return new Response(new Uint8Array(buf), { headers: { 'Content-Type': mime, 'Cache-Control': 'no-cache' } })
 }
 
 function lookupFilePath(fileId: number): string | null {

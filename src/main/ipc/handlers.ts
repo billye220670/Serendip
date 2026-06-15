@@ -146,6 +146,10 @@ export function registerIpcHandlers(): void {
     shell.showItemInFolder(row.path)
   })
 
+  ipcMain.handle(IPC.OPEN_FOLDER, (_event, folderPath: string) => {
+    void shell.openPath(folderPath)
+  })
+
   // ===== 收藏分类 =====
   ipcMain.handle(IPC.LIST_CATEGORIES, () => listCategories())
   ipcMain.handle(IPC.CREATE_CATEGORY, (_event, name: string) => createCategory(name))

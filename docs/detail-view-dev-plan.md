@@ -117,11 +117,12 @@ interface DetailState {
 - `cursor--`，下限为 `max(0, 写过的最早可达位置)`。已浏览的图保留在 sequence 里可回滚。
 - **回滚深度 = BUFFER_SIZE**：用户永远可往前回滚最多 6 位。超出缓冲窗口的更早历史可从 sequence 头部裁剪释放（控内存）。
 
-**j 指示圆点**：
-- 渲染 `BUFFER_SIZE` 个圆点（序列不足时显示已有数量）。
-- 圆点代表"最近 BUFFER_SIZE 个位置的滑动窗口"；**高亮点 = cursor 在该窗口内的位置**。
-- 当 cursor 在最新位置 → 高亮**最右**圆点（原始需求："往后滚完缓冲区再 push 进新图片，此时圆点应在最右侧"）。
-- 每回滚一位，高亮点左移一格；前进则右移，已在最右时前进 = 窗口整体滑动、push 新图、高亮保持最右。
+**j 缩略图条**（阶段 2 已落地，原计划的"圆点"已升级为缩略图）：
+- 渲染最近最多 `BUFFER_SIZE` 张活跃缩略图（窗口；不足时显示已有数量）。
+- 用 `item.id` 做 entry 身份（不用 sequence 下标，避免 store 裁剪后错位）。
+- 高亮 = `entry.id === currentItem.id`；点击 entry 反查 `idToIndex` 跳转到对应 cursor。
+- 新位置的 id 不在活跃集合 → append entering（传送带从右滑入）；溢出时把最早项标 leaving（从左滑出）。回滚到历史项时只改高亮、不改结构。
+- 入场/出场用 inline style 控 width/margin/opacity + CSS transition；`onTransitionEnd` 各自从 DOM 移除（filter `propertyName === 'width'`）。**不要**用 `@keyframes` + `fill-mode: both`（会锁死后续的 transition）。
 
 **边界**：当前 scopePath 下只有 1 张 / 无相关 → 接力流回退到上层目录补充（scopePath 取父目录重抽），仍无则回退全局 rootPath。d 显示空态。
 
@@ -166,33 +167,50 @@ interface DetailState {
 
 ---
 
-### 阶段 2：滚轮接力切换(c) + 接力队列 + 缓冲区回看 + j 指示圆点 + 预加载
+### ✅ 阶段 2：滚轮接力切换(c) + 接力队列 + 缓冲区回看 + j 缩略图条 + 预加载
 
-**目标**：在详情页滚轮/↑↓/空格切换上下一张；相关图按 scopePath 持续抽样接力；可回滚缓冲区；底部 j 圆点反映位置。
+**目标**：在详情页滚轮/↑↓/空格切换上下一张；相关图按 scopePath 持续抽样接力；可回滚缓冲区；底部 j 缩略图条反映位置。
 
-**改动文件**：
-- `src/main/recommender/index.ts`：`RecommendOptions` 加 `scopePath?`；scopePath 存在时用它做 LIKE 前缀（仍校验在 rootPath 下）。
+**实际改动**：
+- `src/main/recommender/index.ts`：`RecommendOptions` 加 `scopePath?`；scopePath 存在时校验在 rootPath 下、用 `escapeLike(scopePath)` 当 LIKE 前缀，否则回退 rootPath。
 - `src/main/ipc/contract.ts` / `handlers.ts` / `preload/index.ts`：`getRecommendations(count, mode, onlyUnrated?, scopePath?)` 三处同步加参。
-- `stores/detail.ts`：补全 `sequence` / `cursor` / `scopePath` / `next()` / `prev()` / 预取与去重（沿用 `seenIds` 思路）/ 缓冲裁剪逻辑（§4）。
-- `views/Detail.tsx`：绑定 wheel / keydown（↑↓空格）；切换动效（纵向位移+淡入淡出）；j 圆点组件；预解码下 1–2 张（`new Image()` 预热或隐藏 `<img>`）。
+- `stores/detail.ts`：补全 `sequence` / `cursor` / `scopePath` / `next()` / `prev()` / `jumpTo(index)` / `_appendItems` / `triggerPrefetch()`；预取通过 `seenIds` 去重；逐级放宽（scopePath → 父目录 → 全局）；`BUFFER_SIZE=6` / `FETCH_BATCH=8` / `PREFETCH_THRESHOLD=2`；裁剪只在 `sequence.length > BUFFER_SIZE * 2` 时触发。
+- `views/Detail.tsx`：
+  - 滚轮逻辑由"时间节流"改为 **deltaY 累积阈值（100）**，与 wheel 事件密度解耦；反向滚动立即归零。
+  - 键盘：Esc 关 / ↑↓ / 空格切换。
+  - body `overflow:hidden` 防穿透。
+  - **激进瞬切版 ImageViewer**：先渲染 `serendip://thumb/<id>` 兜底层（**不模糊、无 transition**），同步加载 `serendip://image/<id>` 原图，`onLoad` 时瞬切覆盖；加载失败显示 `ImageOff` + "无法加载图片"。
+  - 视频沿用阶段 1 单实例方案。
+  - **传送带式 ThumbStrip**：`{id, phase: 'entering'|'in'|'leaving'}` 三相状态机，inline style 控 width/margin/opacity + CSS transition；`onTransitionEnd` 各自从 DOM 移除；最多 6 张活跃，溢出时最早项标 leaving 滑出。
+  - `Preloader` 用隐藏 `<img>` 预热下 1–2 张原图（图片格式才预加载，视频不预解码）。
 
-**实现要点**：
-- 滚轮防误触：节流/去抖一次切一张，避免一滚跳多张（连续滚动也要流畅不卡）。
-- 缓冲窗口 = `BUFFER_SIZE`（默认 6 常量），回滚深度与圆点逻辑严格按 §4。
-- scopePath 默认 = 打开那张图的 `folder_path`；本阶段范围固定该文件夹（面包屑切换留到阶段 3），过少则自动放宽到父目录 / 全局。
-- 离开视口的大图位图及时释放，内存不常驻多张原图。
+**关键决策（与原计划的偏离）**：
+- ✗ **不做 blur-up**：用户明确反馈"模糊→清晰"过渡感太弱、有响应延迟。改为兜底层用清晰缩略图 + 原图加载完瞬切覆盖（无淡入），换来"指哪打哪"的输入响应感。
+- ✗ **不做切图位移动效**（slide-from-bottom/top）：原计划的 220ms 纵向位移与"瞬切"理念冲突，已删。
+- ✗ **不做时间节流**：deltaY 累积比时间节流更符合物理直觉，鼠标滚轮单刻度切 1 张、触控板按物理距离切，与事件频率解耦。
+- ✓ **j 由"圆点"升级为"缩略图条"**：用户要求改为缩略图，且初始只 1 张、随浏览增长、超过 BUFFER_SIZE 时左侧滑出（传送带动画）。
 
-**测试清单**：
-1. 滚轮向下：平滑切到下一张相关图（同文件夹/放宽后的相关图），无白屏。
-2. 滚轮向上：能回看刚才浏览过的图，最多回滚 6 位。
-3. ↑↓ 方向键、空格等效切换。
-4. 底部圆点数量正确，位置随切换/回滚移动；滚到最新时高亮最右。
-5. 连续快速滚动不卡死、不跳多张。
-6. 文件夹只有 1 张时不报错（自动放宽取到相关图）。
+**踩坑记录**：
+1. **CSS keyframe + `fill-mode: both` 覆盖了 leaving 的 width**：缩略图条最初用 `@keyframes thumb-strip-slide-in` 配 `animation-fill-mode: both` 实现入场，但 fill-mode 会让元素停留在动画终态（width=2.5rem），后续把 `.leaving` 类切上去时 width 被 keyframe "锁死"无法回到 0。**修法**：彻底删掉 keyframe，改用三相状态 `entering/in/leaving` + inline style + CSS transition；`onTransitionEnd` 各自处理移除（filter `propertyName === 'width'`）。
+2. **缩略图条用 seqIndex 当身份导致连续滚动错乱**：第一版 entry 用 `sequence` 中的绝对下标做 key，但 store 的 `_appendItems` 会裁剪 sequence 头部 → 老下标全部错位 → 高亮乱跳、出现重复条目、超过 6 张。**修法**两处：
+   - store：裁剪改为只在 `sequence.length > BUFFER_SIZE * 2` 时触发，降低裁剪频率。
+   - ThumbStrip：改用 `item.id` 当身份，渲染时用 `idToIndex` 当场反查下标；高亮判定 = `entry.id === currentItem.id`；新当前项 id 不在活跃集合时才 append entering，否则视为回滚到历史项不改结构。
+3. **blur-up 比想象中更显"卡"**：blur 8px 的"模糊→清晰"过渡虽然学术上正确，但对追求"指哪打哪"的滚轮交互来说反而拖慢观感。最终方案是"清晰缩略图兜底 + 原图瞬切覆盖"，保留兜底但去掉模糊与过渡，是激进与稳定的折中。
+4. **滚轮节流值的迭代**：300ms → 160ms → 80ms → **改为 deltaY 累积阈值 100**。时间节流路径走到底也无法解决"触控板事件密度爆炸"问题，只有 deltaY 累积才是正解。
+
+**测试清单（已全部通过）**：
+1. ✓ 滚轮向下：平滑切到下一张相关图，无白屏（兜底缩略图保证）。
+2. ✓ 滚轮向上：能回看刚才浏览过的图，最多回滚 6 位。
+3. ✓ ↑↓ 方向键、空格等效切换。
+4. ✓ 底部缩略图条：初始 1 张，每往后切 1 张右侧增加，超过 6 后左侧滑出。
+5. ✓ 连续快速滚动不卡死、不跳多张、缩略图条不错乱。
+6. ✓ 文件夹只有 1 张时不报错（自动放宽到父目录/全局）。
+7. ✓ 缩略图条点击可跳回历史项。
+8. ✓ 加载失败显示 ImageOff 占位，不静默保留上一张。
 
 ---
 
-### 阶段 3：面包屑(b) + 根上层灰化 + 范围收窄刷新
+### ✅ 阶段 3：面包屑(b) + 根上层灰化 + 范围收窄刷新
 
 **目标**：顶栏显示当前大图路径的可点击 segment；点某段把 d/c 抽样范围收窄/扩大到该层级并原地刷新；根目录以上的 segment 灰掉不可点。
 

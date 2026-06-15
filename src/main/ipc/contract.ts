@@ -26,6 +26,8 @@ export interface SerendipAPI {
   listLiked(): Promise<MediaItem[]>
   markUnavailable(fileId: number, reason: string): Promise<void>
   revealInFolder(fileId: number): Promise<void>
+  /** 用系统资源管理器打开目录（不选中文件） */
+  openFolder(folderPath: string): Promise<void>
 
   // ===== 收藏分类 =====
   listCategories(): Promise<Category[]>
@@ -67,6 +69,7 @@ export const IPC = {
   LIST_LIKED: 'serendip:listLiked',
   MARK_UNAVAILABLE: 'serendip:markUnavailable',
   REVEAL_IN_FOLDER: 'serendip:revealInFolder',
+  OPEN_FOLDER: 'serendip:openFolder',
   LIST_CATEGORIES: 'serendip:listCategories',
   CREATE_CATEGORY: 'serendip:createCategory',
   RENAME_CATEGORY: 'serendip:renameCategory',
