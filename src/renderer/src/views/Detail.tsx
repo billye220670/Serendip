@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
 import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play } from 'lucide-react'
 import clsx from 'clsx'
-import { useDetailStore, prefetchMore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
+import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
+import { usePanelRecommendationsStore } from '../stores/panelRecommendations'
 import type { MediaItem } from '../../../main/recommender'
 
 /**
@@ -26,6 +27,22 @@ export function DetailView(): React.JSX.Element | null {
   const togglePanel = useUIStore((s) => s.toggleDetailPanel)
 
   const currentItem = sequence[cursor]?.item ?? null
+  const resetPanel = usePanelRecommendationsStore((s) => s.reset)
+  const destroyPanel = usePanelRecommendationsStore((s) => s.destroy)
+
+  // 面板数据 reset：folder_path 变化时触发（同路径下切换图不重置）
+  useEffect(() => {
+    if (currentItem && rootPath) {
+      resetPanel(currentItem.folder_path, rootPath)
+    }
+  }, [currentItem?.folder_path, rootPath, resetPanel])
+
+  // 详情页关闭时销毁面板
+  useEffect(() => {
+    return () => {
+      if (!isOpen) destroyPanel()
+    }
+  }, [isOpen, destroyPanel])
 
   // 转场：isOpen 变化后延一帧驱动 CSS opacity/transform
   const [visible, setVisible] = useState(false)
@@ -143,12 +160,7 @@ export function DetailView(): React.JSX.Element | null {
       </div>
 
       {/* 右侧推荐面板（d）— 挤压布局：宽度受 open 切换 0/PANEL_WIDTH，width 动画收展 */}
-      <RecommendationsPanel
-        sequence={sequence}
-        cursor={cursor}
-        open={panelOpen}
-        jumpTo={jumpTo}
-      />
+      <RecommendationsPanel open={panelOpen} />
 
       {/* 预加载下 1-2 张图（不可见） */}
       <Preloader sequence={sequence} cursor={cursor} />
@@ -463,95 +475,23 @@ function Preloader({
  * 转场：用 width 而不是 visibility/卸载，保留内部 React 状态；overflow-hidden 让收
  *      起过程内容自然裁掉。
  */
-const REFRESH_DELAY = 150 // cursor 切换后的短防抖：吃掉连续滚动期间的重复刷
-const PANEL_DISPLAY_COUNT = 12
 const PANEL_WIDTH = 320 // 双列 + 间距 + 内边距下的舒适宽度
 
 function RecommendationsPanel({
-  sequence,
-  cursor,
   open,
-  jumpTo,
 }: {
-  sequence: SeqEntry[]
-  cursor: number
   open: boolean
-  jumpTo: (index: number) => void
 }): React.JSX.Element {
-  // 防抖后展示的 entries（连同其在 sequence 中的下标，便于点击跳转）
-  type DisplayEntry = { key: number; index: number; item: MediaItem }
-  const [displayed, setDisplayed] = useState<DisplayEntry[]>([])
+  const items = usePanelRecommendationsStore((s) => s.items)
+  const loadMore = usePanelRecommendationsStore((s) => s.loadMore)
+  const detailOpen = useDetailStore((s) => s.open)
 
-  // 用 ref 跟踪当前 displayed 的 key 序列，让 effect 能比对「target 是不是 displayed 的前缀延长」
-  // 而不把 displayed 作为依赖（避免 setDisplayed → 自触发循环）
-  const displayedRef = useRef<DisplayEntry[]>([])
-  displayedRef.current = displayed
-
-  // 首屏直出：第一次面板展开 + 有数据时立即显示，不要等防抖
-  const hasInitializedRef = useRef(false)
-
-  // 计算「应该展示的列表」—— sequence 中 cursor 之后的项，按 mediaId 去重。
-  // sequence 在小目录场景下会重复同一张图作为「副本」让接力队列继续增长（缩略图条 /
-  // 滚轮无限往下滚的心智依赖这个特性），但 d 面板的语义是「相关推荐」，同一张图重复
-  // 12 次毫无意义 —— 这里按 item.id 去重，最多取 PANEL_DISPLAY_COUNT 张唯一图。
-  const target: DisplayEntry[] = useMemo(() => {
-    const arr: DisplayEntry[] = []
-    const seenIds = new Set<number>()
-    for (let i = cursor + 1; i < sequence.length; i++) {
-      const e = sequence[i]
-      if (seenIds.has(e.item.id)) continue
-      seenIds.add(e.item.id)
-      arr.push({ key: e.key, index: i, item: e.item })
-      if (arr.length >= PANEL_DISPLAY_COUNT) break
-    }
-    return arr
-  }, [sequence, cursor])
-
-  // 刷新策略 —— 区分两种场景：
-  //   (1) target 是 displayed 的前缀延长（cursor 没动，prefetchMore 追加） → 直接追加，已显示卡不动
-  //   (2) 真正的内容切换（cursor 变化或 sequence 中段被改写） → 立即清空，REFRESH_DELAY 后置入 target，
-  //       新卡 mount 时自身的 fade-in 即「pop in」效果
-  useEffect(() => {
-    if (!open) return
-
-    const cur = displayedRef.current
-    const isPrefixExtension =
-      cur.length > 0 &&
-      target.length >= cur.length &&
-      cur.every((d, i) => target[i] && target[i].key === d.key)
-
-    if (isPrefixExtension) {
-      // 末尾延长：只追加多出来的部分；新卡自身有 mount 动效，单张「pop」进来
-      if (target.length > cur.length) {
-        setDisplayed(target)
-      }
-      return
-    }
-
-    if (!hasInitializedRef.current) {
-      // 首次：立即填充
-      setDisplayed(target)
-      hasInitializedRef.current = true
-      return
-    }
-
-    // 内容切换：先空一帧（面板真的空着，不显占位），防抖后置入新数据
-    setDisplayed([])
-    const timer = window.setTimeout(() => setDisplayed(target), REFRESH_DELAY)
-    return () => window.clearTimeout(timer)
-  }, [target, open])
-
-  // 面板关闭时重置首次标记，下次打开仍然立即填充
-  useEffect(() => {
-    if (!open) hasInitializedRef.current = false
-  }, [open])
-
-  // 触底加载：当 displayed 接近 target 末尾时调推荐 store 再抽一批
+  // 触底加载
   const { ref: bottomRef, inView: bottomInView } = useInView({ rootMargin: '200px' })
   useEffect(() => {
     if (!open) return
-    if (bottomInView) void prefetchMore()
-  }, [bottomInView, open])
+    if (bottomInView) loadMore()
+  }, [bottomInView, open, loadMore])
 
   return (
     <aside
@@ -570,21 +510,21 @@ function RecommendationsPanel({
         <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between flex-shrink-0">
           <span className="text-sm font-medium text-white/85">相关推荐</span>
           <span className="text-xs text-white/40 tabular-nums">
-            {displayed.length > 0 ? `${displayed.length} 张` : ''}
+            {items.length > 0 ? `${items.length} 张` : ''}
           </span>
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-3 scroll-smooth">
           <div className="grid grid-cols-2 gap-2.5">
-            {displayed.map((entry) => (
+            {items.map((item) => (
               <RecommendationItem
-                key={entry.key}
-                entry={entry}
-                onClick={() => jumpTo(entry.index)}
+                key={item.id}
+                item={item}
+                onClick={() => detailOpen(item)}
               />
             ))}
           </div>
-          {displayed.length > 0 && <div ref={bottomRef} className="h-1" />}
+          {items.length > 0 && <div ref={bottomRef} className="h-1" />}
         </div>
       </div>
     </aside>
@@ -598,10 +538,10 @@ function RecommendationsPanel({
  *  本地 webp 缩略图通常已被 OS 缓存，<img> 的 onLoad 几乎与 mount 同步，不会先看见空底色再看见图。
  */
 function RecommendationItem({
-  entry,
+  item,
   onClick,
 }: {
-  entry: { key: number; index: number; item: MediaItem }
+  item: MediaItem
   onClick: () => void
 }): React.JSX.Element {
   const [imgError, setImgError] = useState(false)
@@ -611,7 +551,7 @@ function RecommendationItem({
     const raf = requestAnimationFrame(() => setVisible(true))
     return () => cancelAnimationFrame(raf)
   }, [])
-  const isVideo = entry.item.type === 'video'
+  const isVideo = item.type === 'video'
 
   return (
     <button
@@ -629,7 +569,7 @@ function RecommendationItem({
         </div>
       ) : (
         <img
-          src={`serendip://thumb/${entry.item.id}`}
+          src={`serendip://thumb/${item.id}`}
           alt=""
           loading="lazy"
           draggable={false}
@@ -642,9 +582,9 @@ function RecommendationItem({
           <div className="absolute top-1.5 right-1.5 grid place-items-center w-6 h-6 rounded-full bg-black/55 backdrop-blur">
             <Play className="w-3 h-3 text-white fill-white" />
           </div>
-          {entry.item.duration_ms && (
+          {item.duration_ms && (
             <div className="absolute bottom-1.5 right-1.5 px-1.5 py-0.5 text-[10px] leading-none bg-black/60 backdrop-blur rounded text-white tabular-nums">
-              {formatDuration(entry.item.duration_ms)}
+              {formatDuration(item.duration_ms)}
             </div>
           )}
         </>

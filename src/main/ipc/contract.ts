@@ -16,6 +16,7 @@ export interface SerendipAPI {
 
   // ===== 推荐与浏览 =====
   getRecommendations(count: number, mode: ExploreMode, onlyUnrated?: boolean, scopePath?: string): Promise<MediaItem[]>
+  getHierarchicalRecommendations(folderPath: string, rootPath: string, count: number, mode: ExploreMode): Promise<MediaItem[]>
   setLiked(fileId: number, liked: boolean): Promise<void>
   setDisliked(fileId: number, disliked: boolean): Promise<void>
   /** 批量设置喜欢（多选模式） */
@@ -62,6 +63,7 @@ export const IPC = {
   GET_STATS: 'serendip:getStats',
   SCAN_PROGRESS: 'serendip:scanProgress',
   GET_RECOMMENDATIONS: 'serendip:getRecommendations',
+  GET_HIERARCHICAL_RECOMMENDATIONS: 'serendip:getHierarchicalRecommendations',
   SET_LIKED: 'serendip:setLiked',
   SET_DISLIKED: 'serendip:setDisliked',
   SET_LIKED_BATCH: 'serendip:setLikedBatch',

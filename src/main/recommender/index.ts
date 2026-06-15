@@ -11,6 +11,7 @@
  * - 探索程度 (prefer/balanced/explore) 调节"偏好"vs"探索"的强度
  */
 
+import * as path from 'path'
 import { getDatabase } from '../db'
 
 export type ExploreMode = 'prefer' | 'balanced' | 'explore'
@@ -35,6 +36,13 @@ interface RecommendOptions {
   onlyUnrated?: boolean
   /** 限定抽样路径范围（详情页接力用）；必须在 rootPath 之下，否则忽略 */
   scopePath?: string
+}
+
+export interface HierarchicalRecommendOptions {
+  folderPath: string
+  rootPath: string
+  count: number
+  mode: ExploreMode
 }
 
 interface FolderWeight {
@@ -126,6 +134,216 @@ export function recommend(options: RecommendOptions): MediaItem[] {
   }
 
   // 3) 更新 last_shown_at（本批次抽中的文件）
+  if (results.length > 0) {
+    const ids = results.map((r) => r.id)
+    const placeholders = ids.map(() => '?').join(',')
+    db.prepare(
+      `UPDATE media_files
+       SET shown_count = shown_count + 1,
+           last_shown_at = ?
+       WHERE id IN (${placeholders})`
+    ).run(now, ...ids)
+  }
+
+  return results
+}
+
+/**
+ * 分层路径推荐：以当前路径为锚点，逐级向上层路径放宽采样
+ * 权重策略：当前文件数越少，父链权重越高；最多 50% 给当前层
+ */
+export function getHierarchicalRecommendations(
+  options: HierarchicalRecommendOptions
+): MediaItem[] {
+  const { folderPath, rootPath, count, mode } = options
+  const db = getDatabase()
+
+  // 查当前文件夹的文件数
+  const currentFolderCount = db
+    .prepare(
+      'SELECT COUNT(*) as c FROM media_files WHERE folder_path = ? AND disliked = 0 AND unavailable = 0'
+    )
+    .get(folderPath) as { c: number } | undefined
+
+  if (!currentFolderCount) return []
+  const N = currentFolderCount.c
+  if (N === 0) return []
+
+  // 构建分层采样计划
+  const plan = buildLayerPlan(folderPath, rootPath, count, N)
+  if (plan.length === 0) return []
+
+  // 逐层采样，累积 excludeIds 去重
+  const allResults: MediaItem[] = []
+  const excludeIds = new Set<number>()
+
+  for (const layer of plan) {
+    if (layer.count <= 0) continue
+
+    let items: MediaItem[] = []
+    if (layer.exactFolder) {
+      // 当前层：精确匹配 folder_path
+      items = pickFilesFromFolderExact(db, layer.scopePath, layer.count, mode, excludeIds)
+    } else {
+      // 父链层：用 LIKE 前缀（含子目录）
+      items = recommend({
+        count: layer.count,
+        mode,
+        excludeIds,
+        scopePath: layer.scopePath
+      })
+    }
+
+    // 累积到全局 excludeIds
+    items.forEach((item) => excludeIds.add(item.id))
+    allResults.push(...items)
+  }
+
+  // shuffle 打乱顺序（避免按层分组的视觉感）
+  fisherYatesShuffle(allResults)
+
+  return allResults.slice(0, count)
+}
+
+/**
+ * 构建分层采样计划：返回每一层应采多少张
+ */
+function buildLayerPlan(
+  folderPath: string,
+  rootPath: string,
+  count: number,
+  currentFolderFileCount: number
+): Array<{ scopePath: string; count: number; exactFolder: boolean }> {
+  // 决定当前层权重（基于文件数 N）
+  let currentRatio = 0.5
+  const N = currentFolderFileCount
+  if (N <= 2) currentRatio = 0
+  else if (N <= 15) currentRatio = 0.25
+  else if (N <= 50) currentRatio = 0.35
+  else if (N <= 200) currentRatio = 0.45
+  else currentRatio = 0.5
+
+  // 如果已在根目录，强制当前层 100%
+  if (folderPath === rootPath) {
+    return [{ scopePath: folderPath, count, exactFolder: true }]
+  }
+
+  // 向上解析父链（直到根目录）
+  const ancestors: string[] = []
+  let p = path.dirname(folderPath)
+  while (p !== folderPath) {
+    ancestors.push(p)
+    if (p === rootPath) break
+    p = path.dirname(p)
+  }
+
+  if (ancestors.length === 0) {
+    // 无父链，当前层 100%
+    return [{ scopePath: folderPath, count, exactFolder: true }]
+  }
+
+  // 分配数量
+  const plan: Array<{ scopePath: string; count: number; exactFolder: boolean }> = []
+
+  const currentCount = Math.round(count * currentRatio)
+  if (currentCount > 0) {
+    plan.push({ scopePath: folderPath, count: currentCount, exactFolder: true })
+  }
+
+  // 父链权重：60% / 25% / 15%（递减，超过 3 层的余量归最后一层）
+  const ancestorRatio = 1 - currentRatio
+  const ANCESTOR_WEIGHTS = [0.6, 0.25, 0.15]
+
+  let totalAncestorCount = 0
+  for (let i = 0; i < ancestors.length; i++) {
+    const w = i < ANCESTOR_WEIGHTS.length ? ANCESTOR_WEIGHTS[i] : 0
+    let ancestorCount = Math.round(count * ancestorRatio * w)
+
+    // 最后一层吸收舍入误差
+    if (i === ancestors.length - 1) {
+      ancestorCount = count - currentCount - totalAncestorCount
+    }
+
+    if (ancestorCount > 0) {
+      plan.push({ scopePath: ancestors[i], count: ancestorCount, exactFolder: false })
+      totalAncestorCount += ancestorCount
+    }
+  }
+
+  return plan
+}
+
+/**
+ * 从指定文件夹精确采样（folder_path = 精确匹配，不含子目录）
+ */
+function pickFilesFromFolderExact(
+  db: ReturnType<typeof getDatabase>,
+  folderPath: string,
+  count: number,
+  mode: ExploreMode,
+  excludeIds: Set<number>
+): MediaItem[] {
+  const params = getModeParams(mode)
+
+  // 读出文件夹下所有可用文件（精确 folder_path，无子目录）
+  const files = db.prepare(`
+    SELECT id, path, folder_path, type, width, height, duration_ms, liked, disliked,
+           IFNULL(last_shown_at, 0) as last_shown_at,
+           shown_count
+    FROM media_files
+    WHERE folder_path = ? AND disliked = 0 AND unavailable = 0
+  `).all(folderPath) as Array<MediaItem & { last_shown_at: number; shown_count: number }>
+
+  const available = files.filter((f) => !excludeIds.has(f.id))
+  if (available.length === 0) return []
+
+  const results: MediaItem[] = []
+  const now = Date.now()
+
+  // 加权采样，防止重复
+  const seenInThisBatch = new Set<number>()
+
+  for (let i = 0; i < count * 3 && results.length < count; i++) {
+    let totalWeight = 0
+    const weights: number[] = []
+
+    for (const f of available) {
+      if (seenInThisBatch.has(f.id)) continue
+
+      let w = 1
+      if (f.liked) w *= params.likedBoost
+      const sinceLastShownSec = f.last_shown_at > 0 ? (now - f.last_shown_at) / 1000 : Infinity
+      w *= computeCooldown(sinceLastShownSec, params.fileCooldownHalfLifeSec)
+      w *= 1 / Math.pow(1 + f.shown_count, params.shownCountPenalty)
+      weights.push(w)
+      totalWeight += w
+    }
+
+    if (totalWeight <= 0) break
+
+    let r = Math.random() * totalWeight
+    let picked: MediaItem | null = null
+    let filterIndex = 0
+
+    for (let j = 0; j < available.length; j++) {
+      if (seenInThisBatch.has(available[j].id)) continue
+      r -= weights[filterIndex]
+      if (r <= 0) {
+        picked = available[j]
+        break
+      }
+      filterIndex++
+    }
+
+    if (picked) {
+      seenInThisBatch.add(picked.id)
+      const pickedTyped = picked as MediaItem & { last_shown_at: number; shown_count: number }
+      const { last_shown_at: _l, shown_count: _s, ...rest } = pickedTyped
+      results.push(rest as MediaItem)
+    }
+  }
+
+  // 更新 shown_count
   if (results.length > 0) {
     const ids = results.map((r) => r.id)
     const placeholders = ids.map(() => '?').join(',')
@@ -288,4 +506,12 @@ function getModeParams(mode: ExploreMode): ModeParams {
 /** 转义 SQL LIKE 中的特殊字符 */
 function escapeLike(str: string): string {
   return str.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_')
+}
+
+/** Fisher-Yates 随机打乱 */
+function fisherYatesShuffle<T>(arr: T[]): void {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  }
 }

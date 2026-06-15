@@ -3,7 +3,7 @@ import { existsSync } from 'fs'
 import { IPC } from './contract'
 import { getDatabase } from '../db'
 import { scanRoot, type ScanProgress } from '../scanner'
-import { recommend, type ExploreMode } from '../recommender'
+import { recommend, getHierarchicalRecommendations, type ExploreMode } from '../recommender'
 import {
   listCategories,
   createCategory,
@@ -64,6 +64,11 @@ export function registerIpcHandlers(): void {
   // 获取推荐内容
   ipcMain.handle(IPC.GET_RECOMMENDATIONS, (_event, count: number, mode: ExploreMode, onlyUnrated?: boolean, scopePath?: string) => {
     return recommend({ count, mode, onlyUnrated, scopePath })
+  })
+
+  // 获取分层推荐内容（详情页右侧面板）
+  ipcMain.handle(IPC.GET_HIERARCHICAL_RECOMMENDATIONS, (_event, folderPath: string, rootPath: string, count: number, mode: ExploreMode) => {
+    return getHierarchicalRecommendations({ folderPath, rootPath, count, mode })
   })
 
   // 设置喜欢
