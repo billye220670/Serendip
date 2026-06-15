@@ -379,7 +379,10 @@ function ThumbStrip({
               if (phase !== 'in') return
               if (targetIndex !== undefined) jumpTo(targetIndex)
             }}
-            className="thumb-strip-item h-[52px] rounded focus:outline-none"
+            className={clsx(
+              'thumb-strip-item h-[52px] rounded focus:outline-none',
+              isCurrent && 'ring-2 ring-primary'
+            )}
             style={{
               width: collapsed ? 0 : THUMB_W_PX,
               marginRight: collapsed ? 0 : THUMB_GAP_PX,
@@ -394,12 +397,7 @@ function ThumbStrip({
               )
             }}
           >
-            <div
-              className={clsx(
-                'relative w-full h-full rounded overflow-hidden',
-                isCurrent && 'ring-2 ring-primary'
-              )}
-            >
+            <div className="relative w-full h-full rounded overflow-hidden">
               <img
                 src={`serendip://thumb/${mediaId}`}
                 alt=""

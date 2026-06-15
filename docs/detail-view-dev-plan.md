@@ -233,27 +233,40 @@ interface DetailState {
 
 ---
 
-### 阶段 4：相关推荐面板(d) + 开关(e) + 防抖刷新 + 骨架占位
+### ✅ 阶段 4：相关推荐面板(d) + 开关(e) + 分层路径推荐
 
-**目标**：右侧 overlay 竖向 mini 流展示 scopePath 下相关图；Tab/按钮开关；滚动期不刷新，停稳 400–600ms 后防抖刷新并用骨架占位；点项即成为新大图。
+**目标**：右侧面板展示相关图；Tab/按钮开关；点项即成为新大图。
 
-**改动文件**：
-- `views/Detail.tsx`：d 面板（`absolute` 浮在大图右侧之上，**不占位**，大图宽度恒定）。e 开关按钮（右上角，图标随状态切换，Tab 快捷键）。
-- `stores/detail.ts`：`panelOpen` + `togglePanel()`；d 列表 = `sequence` 中 cursor 之后的项（与接力队列共享，§3 store）。点项 → `jumpTo(item)`。
+**实际改动**：
+- `views/Detail.tsx`：d 面板作为顶层 flex 行的**右侧兄弟节点**（挤压布局），`width` 动画 0 ↔ 320px；双列 grid，3:4 固定比例卡，每卡 mount 时 fade+1px 上移（pop-in）；Tab 快捷键 + 顶栏右侧图标按钮开关；`onWheel stopPropagation` 防穿透。触底哨兵（`useInView` 200px rootMargin）触发追加。
+- `stores/ui.ts`：`detailPanelOpen` + `toggleDetailPanel()`（persist，默认收起）。
+- `stores/panelRecommendations.ts`（新建）：独立 Zustand store，管理面板生命周期。`reset(folderPath, rootPath)` 防抖 200ms + AbortController 防 stale；`loadMore()` 触底追加 10 张；`destroy()` 清理计时器/请求。
+- `src/main/recommender/index.ts`：新增 `getHierarchicalRecommendations`（分层路径推荐主函数）、`buildLayerPlan`（按文件数确定当前层/父链分配比例）、`pickFilesFromFolderExact`（精确匹配 `folder_path =`，区别于 `recommend` 的 LIKE 前缀）、`fisherYatesShuffle`（打乱合并结果）。
+- `src/main/ipc/contract.ts` / `handlers.ts` / `preload/index.ts`：新增 `getHierarchicalRecommendations` 通道三处同步。
 
-**实现要点**：
-- d 内容 = 接力队列向前的一段（6–8 张，滚动加载更多），**不是**铺满对比墙。
-- 防抖：大图停稳 400–600ms 才刷新 d；滚动期间保持上次内容不闪烁；刷新时骨架/模糊占位，缩略图（`serendip://thumb`）到达淡入。
-- 点 d 某项：它成为当前大图，c + 面包屑 + d 随之刷新。
-- e 默认态可设默认收起（零成本）或默认浮出——用 `panelOpen` 初值控制，建议默认收起。
-- **不做 hover 热区自动唤出**（避免误触）。
+**关键偏离（与原计划的差异）**：
+- ✗ **不做 `absolute` 浮层**：改为挤压布局（flex 兄弟）—— 面板展开时大图区真实收窄。用户反馈看图时叠层感不如挤压直观。
+- ✗ **不做骨架/shimmer 占位**：改为 pop-in 动效（每卡 mount 时独立 fade+1px 上移）。骨架对小尺寸双列卡信息量不足，且 webp 缩略图通常由 OS 缓存近乎即时，骨架变成"一闪而过"噪音。
+- ✗ **不共享接力队列**：原计划 d 内容 = `sequence[cursor+1..]`；实际改为独立 `panelRecommendations` store，以分层路径推荐替代单一 scopePath 范围抽样。推荐范围随 `folder_path` 变化（跨目录切图时重置，同目录切图时保持）。
+- ✓ **分层路径推荐（新增 UX 策略）**：文件数越少，父链权重越高（≤2张 100% 父链；>200张 50/50）；父链内 P1=60% / P2=25% / P3+=15%。引导用户逐级发现父路径内容。
+
+**踩坑记录**：
+1. **ring 被 overflow-hidden 裁掉**：缩略图条高亮用 `ring-2 ring-primary` 写在了带 `overflow-hidden` 的内层 div 上，ring（box-shadow 实现）被裁剪，视觉不可见。**修法**：将 ring 移到外层 button（无 overflow:hidden）。
+2. **`@main/recommender` 路径别名在 renderer 不可用**：tsconfig.web.json 只定义了 `@renderer/*` 别名，新建的 `panelRecommendations.ts` 若用 `@main/recommender` import 会报"找不到模块"。**修法**：改用相对路径 `../../../main/recommender`（编译期类型擦除，运行时不实际 import）。
+3. **AbortController 无法真正取消 Electron IPC 请求**：IPC `invoke` 一旦发出，主进程无法被打断。AbortController 在此只做 stale 标记，await 返回后检查 `ac.signal.aborted` 决定是否丢弃结果，防止竞态写入 store。需要明确区分"取消请求"和"防 stale 写入"两种语义。
+4. **`last_shown_at` / `shown_count` 字段不在 `MediaItem` 类型上**：`pickFilesFromFolderExact` 查询包含这两个字段，直接解构会 TS 报错。**修法**：将结果断言为 `MediaItem & { last_shown_at: number; shown_count: number }` 后解构，再 spread 剩余字段作为返回值。
+5. **`pickFilesFromFolderExact` 权重索引错位**：内层循环用 `available` 数组迭代，但跳过 `seenInThisBatch` 项时未同步维护 `weights` 数组的 filterIndex，导致权重对应位置偏移。**修法**：引入 `filterIndex` 计数器，只在未跳过时递增。
+6. **同目录连续切图不必重置面板**：原实现监听 `cursor` 变化触发 reset；同路径下切换不同图 cursor 变但 `folder_path` 不变，每次都重置造成不必要的防抖延迟和面板闪烁。**修法**：effect 依赖改为 `currentItem?.folder_path`，只在路径真正变化时 reset。
 
 **测试清单**：
-1. Tab / 右上角按钮切换 d 面板显隐，图标随状态变（收起态显"唤出"，展开态显"收起"）。
-2. d 面板浮在大图右侧上方，大图宽度**不**因 d 出现而收缩。
-3. 快速滚动切图时 d 不闪烁；停稳约 0.5s 后刷新，先骨架后淡入缩略图。
-4. 点 d 中某张 → 它变成当前大图，面包屑/d 同步刷新。
-5. d 内容与接力的"下一张"一致（共享队列）。
+1. ✓ Tab / 右上角按钮切换 d 面板，图标随状态更新；面板开关有宽度动画（250ms）。
+2. ✓ d 面板展开时大图区实际收窄（挤压布局，非浮层）；关闭时还原。
+3. ✓ 打开小目录图片（<3 张）：面板内容主要来自父层路径；打开大目录（>200 张）：约 50% 当前目录 + 50% 父层。
+4. ✓ 同目录内连续切图：面板保持不重置，无防抖延迟、无闪烁。
+5. ✓ 切换到不同目录图片：面板 200ms 防抖后重置，加载新路径推荐。
+6. ✓ 触底追加：滚到底部后 append 10 张，已有卡不跳动。
+7. ✓ 点 d 中某张 → 该图成为当前大图，面包屑同步刷新。
+8. ✓ 关闭详情页后再打开：面板状态干净，无残留数据。
 
 ---
 
