@@ -23,7 +23,7 @@
   --color-border: #e7e5e4;
   --color-muted: #f5f5f4;
   --color-muted-foreground: #78716c;
-  --color-sidebar: #f0efee;
+  --color-sidebar: #e7e5e4;
   --color-card-shadow: rgba(0, 0, 0, 0.06);
   --color-glass: rgba(255, 255, 255, 0.78);
 }
@@ -85,6 +85,17 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-muted-foreground);
+}
+
+/* 亮色模式：track 深于 thumb，scrollbar 可见 */
+:root[data-theme='light'] ::-webkit-scrollbar-track {
+  background: #c8c5c3; /* 比 stone-300 背景略深，保持 track 可见 */
+}
+:root[data-theme='light'] ::-webkit-scrollbar-thumb {
+  background: #a8a29e;
+}
+:root[data-theme='light'] ::-webkit-scrollbar-thumb:hover {
+  background: #78716c;
 }
 
 /* 详情页切图纵向滑入动画 */

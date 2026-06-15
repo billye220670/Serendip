@@ -100,19 +100,15 @@ export function CategorySearchPanel({
   return (
     // 面板卡片：绝对定位由父节点的 relative 确定（bottom-full = 锚定在 # 按钮上方）
     <div
-      className="absolute bottom-full mb-2 left-0 w-72 flex flex-col rounded-2xl overflow-hidden shadow-2xl"
-      style={{
-        height: 380,
-        background: 'rgba(22, 22, 26, 0.97)',
-        backdropFilter: 'blur(20px)',
-      }}
+      className="absolute bottom-full mb-2 left-0 w-72 flex flex-col rounded-2xl overflow-hidden shadow-2xl ring-1 ring-border bg-secondary"
+      style={{ height: 380 }}
       // 面板内滚轮只滚列表，阻止穿透到底层切图
       onWheel={(e) => e.stopPropagation()}
     >
       {/* 搜索栏 */}
       <div className="px-4 py-4 flex-shrink-0">
-        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-black/30">
-          <Search className="w-4 h-4 text-white/40 flex-shrink-0" />
+        <div className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-background">
+          <Search className="w-4 h-4 text-muted-foreground flex-shrink-0" />
           <input
             ref={inputRef}
             type="text"
@@ -120,12 +116,12 @@ export function CategorySearchPanel({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { void handleKeyDown(e) }}
             placeholder="搜索或新建分类…"
-            className="flex-1 bg-transparent text-sm text-white placeholder-white/35 outline-none caret-primary"
+            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none caret-primary"
           />
           {query && (
             <button
               onPointerDown={(e) => { e.preventDefault(); setQuery('') }}
-              className="text-white/35 hover:text-white/70 transition-colors focus:outline-none"
+              className="text-muted-foreground hover:text-foreground transition-colors focus:outline-none"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -141,18 +137,18 @@ export function CategorySearchPanel({
             <li key={cat.id}>
               <button
                 onPointerDown={(e) => { e.preventDefault(); void handleToggle(cat.id) }}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors text-white/80 hover:bg-white/5 hover:text-white"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors text-foreground/80 hover:bg-foreground/[0.05] hover:text-foreground"
               >
                 <span
                   className={clsx(
                     'flex-shrink-0 w-4 h-4 rounded border transition-colors flex items-center justify-center',
-                    isMember ? 'bg-primary border-primary' : 'border-white/30'
+                    isMember ? 'bg-primary border-primary' : 'border-border'
                   )}
                 >
                   {isMember && <Check className="w-3 h-3 text-white" strokeWidth={2.5} />}
                 </span>
                 <span className="flex-1 truncate">{cat.name}</span>
-                <span className="text-xs text-white/30 tabular-nums flex-shrink-0">{cat.itemCount}</span>
+                <span className="text-xs text-muted-foreground tabular-nums flex-shrink-0">{cat.itemCount}</span>
               </button>
             </li>
           )
@@ -162,20 +158,20 @@ export function CategorySearchPanel({
           <li>
             <button
               onPointerDown={(e) => { e.preventDefault(); void handleCreate() }}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors text-white/60 hover:bg-white/5 hover:text-white"
+              className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-left transition-colors text-foreground/60 hover:bg-foreground/[0.05] hover:text-foreground"
             >
-              <span className="flex-shrink-0 w-4 h-4 rounded border border-dashed border-white/40 flex items-center justify-center">
+              <span className="flex-shrink-0 w-4 h-4 rounded border border-dashed border-border flex items-center justify-center">
                 <Plus className="w-3 h-3" />
               </span>
               <span className="flex-1 truncate">
-                新建「<span className="text-white font-medium">{trimmed}</span>」
+                新建「<span className="text-foreground font-medium">{trimmed}</span>」
               </span>
             </button>
           </li>
         )}
 
         {filtered.length === 0 && !showCreate && (
-          <li className="px-4 py-4 text-sm text-white/35 text-center">暂无分类</li>
+          <li className="px-4 py-4 text-sm text-muted-foreground text-center">暂无分类</li>
         )}
       </ul>
     </div>

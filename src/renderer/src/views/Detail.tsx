@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Heart, Hash } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder } from 'lucide-react'
 import clsx from 'clsx'
 import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
@@ -8,6 +8,7 @@ import { useUIStore } from '../stores/ui'
 import { usePanelRecommendationsStore } from '../stores/panelRecommendations'
 import { useCategoriesStore } from '../stores/categories'
 import { CategorySearchPanel } from '../components/CategorySearchPanel'
+import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import type { MediaItem } from '../../../main/recommender'
 
 /**
@@ -27,6 +28,8 @@ export function DetailView(): React.JSX.Element | null {
   const rootPath = useLibraryStore((s) => s.rootPath)
   const panelOpen = useUIStore((s) => s.detailPanelOpen)
   const togglePanel = useUIStore((s) => s.toggleDetailPanel)
+  const theme = useUIStore((s) => s.theme)
+  const isLight = theme === 'light'
 
   const currentItem = sequence[cursor]?.item ?? null
   const resetPanel = usePanelRecommendationsStore((s) => s.reset)
@@ -188,7 +191,8 @@ export function DetailView(): React.JSX.Element | null {
   return (
     <div
       className={clsx(
-        'fixed inset-0 z-50 bg-black flex flex-row',
+        'fixed inset-0 z-50 flex flex-row',
+        isLight ? 'bg-stone-200' : 'bg-black',
         'transition-opacity duration-300',
         visible ? 'opacity-100' : 'opacity-0'
       )}
@@ -198,14 +202,24 @@ export function DetailView(): React.JSX.Element | null {
           flex-1 + min-w-0 让右侧面板挤压时宽度自然让出 */}
       <div className="relative flex-1 min-w-0 flex flex-col items-center justify-center">
         {/* 顶部黑色渐变遮罩：从顶部向下淡出，提升面包屑/按钮在亮图上的可读性 */}
-        <div className="absolute top-0 left-0 right-0 h-28 z-10 pointer-events-none bg-gradient-to-b from-black/75 via-black/40 to-transparent" />
+        <div
+          className="absolute top-0 left-0 right-0 h-28 z-10 pointer-events-none"
+          style={{
+            background: isLight
+              ? 'linear-gradient(to bottom, rgba(214,211,209,0.92), rgba(214,211,209,0.45), transparent)'
+              : 'linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0.4), transparent)',
+          }}
+        />
 
         {/* 顶栏：后退 + 面包屑 + 面板开关。right-0 即左区右边界，按钮自然贴近面板 */}
         <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-3 px-4 py-3">
           <button
             onClick={close}
             aria-label="后退"
-            className="flex-shrink-0 grid place-items-center w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors focus:outline-none focus-visible:outline-none"
+            className={clsx(
+              'flex-shrink-0 grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none focus-visible:outline-none',
+              isLight ? 'bg-black/10 text-foreground hover:bg-black/15' : 'bg-black/45 text-white hover:bg-black/65'
+            )}
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
@@ -221,7 +235,10 @@ export function DetailView(): React.JSX.Element | null {
             onClick={togglePanel}
             aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
             title={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'}
-            className="flex-shrink-0 grid place-items-center w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 text-white transition-colors focus:outline-none focus-visible:outline-none"
+            className={clsx(
+              'flex-shrink-0 grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none focus-visible:outline-none',
+              isLight ? 'bg-black/10 text-foreground hover:bg-black/15' : 'bg-black/45 text-white hover:bg-black/65'
+            )}
           >
             {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
           </button>
@@ -249,13 +266,15 @@ export function DetailView(): React.JSX.Element | null {
               'grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none',
               itemLiked
                 ? 'bg-pink-500/90 text-white hover:bg-pink-400/90'
-                : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                : isLight
+                  ? 'bg-black/10 text-foreground/60 hover:bg-black/15 hover:text-foreground'
+                  : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
             )}
           >
             <Heart className={clsx('w-5 h-5', itemLiked && 'fill-current')} />
           </button>
 
-          <div className="w-px h-6 bg-white/25" />
+          <div className={isLight ? 'w-px h-6 bg-foreground/15' : 'w-px h-6 bg-white/25'} />
 
           {/* h：# 按钮，relative 用于面板锚定 */}
           <div className="relative">
@@ -267,7 +286,9 @@ export function DetailView(): React.JSX.Element | null {
                 'grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none',
                 searchOpen
                   ? 'bg-primary text-white'
-                  : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                  : isLight
+                    ? 'bg-black/10 text-foreground/60 hover:bg-black/15 hover:text-foreground'
+                    : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
               )}
             >
               <Hash className="w-5 h-5" />
@@ -325,7 +346,7 @@ function ImageViewer({ item }: { item: MediaItem }): React.JSX.Element {
 
   if (error) {
     return (
-      <div className="flex flex-col items-center gap-3 text-white/60">
+      <div className="flex flex-col items-center gap-3 text-muted-foreground">
         <ImageOff className="w-12 h-12" />
         <p className="text-sm">无法加载图片</p>
       </div>
@@ -393,7 +414,7 @@ function VideoPlayer({ item }: { item: MediaItem }): React.JSX.Element {
 
   if (videoError) {
     return (
-      <div className="flex flex-col items-center gap-3 text-white/60">
+      <div className="flex flex-col items-center gap-3 text-muted-foreground">
         <VideoOff className="w-12 h-12" />
         <p className="text-sm">视频无法播放</p>
         <p className="text-xs opacity-60">
@@ -585,121 +606,198 @@ function Preloader({
  *
  * 布局：作为顶层 flex 行的右侧子项，撑满全高；宽度由 open 切换 0 ↔ PANEL_WIDTH，
  *      整体大图区随之让出宽度。展开/收起走 width transition，250ms。
- * 内容：双列 grid，每张卡固定 3:4，图片用 absolute inset-0 + object-cover 充满，
- *      因此「占位骨架」与「真实卡片」尺寸完全一致 —— 防抖刷新瞬间整面板的占位先以
- *      shimmer 显示，图片各自异步到位后再淡入。
- * 数据源：`sequence` 中 cursor 之后的项（与接力队列共享）。
- * 防抖：cursor 变化后延迟 REFRESH_DELAY 才把 next 切片提交到 displayed。
- *      首次打开 + 有数据时立即填充，避免「打开就空一段」。
- * 触底：useInView 末尾哨兵触发 prefetchMore() 追加更多。
- * 转场：用 width 而不是 visibility/卸载，保留内部 React 状态；overflow-hidden 让收
- *      起过程内容自然裁掉。
- */
-/**
- * 右侧推荐面板（d） — 双列瀑布流（挤压布局）。
- *
- * 布局：作为顶层 flex 行的右侧子项，撑满全高；宽度由 open 切换 0 ↔ PANEL_WIDTH，
- *      整体大图区随之让出宽度。展开/收起走 width transition，250ms。
  * 内容：双列 grid，每张卡固定 3:4，图片用 absolute inset-0 + object-cover 充满。
  * 数据源：`sequence` 中 cursor 之后的项（与接力队列共享）。
- * 视觉：不再使用骨架占位 —— cursor 切换瞬间把 displayed 清空（面板真的空着），
- *      短防抖后填入 target，每张卡 mount 时自身做一次 fade+1px 上移（pop in）。
- *      图片到位由 <img onLoad> 各自淡入，本来就是一张张错峰出现，不需要再人工 stagger。
- *      没图就是真没图（不再骗用户「快来了」）。
  * 触底：useInView 末尾哨兵触发 prefetchMore() 追加更多。
  * 转场：用 width 而不是 visibility/卸载，保留内部 React 状态；overflow-hidden 让收
  *      起过程内容自然裁掉。
  */
-const PANEL_WIDTH = 320 // 双列 + 间距 + 内边距下的舒适宽度
+const PANEL_WIDTH = 380 // 双列 + 间距 + 内边距下的舒适宽度
+
+interface PanelMenu {
+  x: number
+  y: number
+  item: MediaItem
+}
 
 function RecommendationsPanel({
   open,
 }: {
   open: boolean
 }): React.JSX.Element {
+  const theme = useUIStore((s) => s.theme)
+  const isLight = theme === 'light'
   const items = usePanelRecommendationsStore((s) => s.items)
   const loadMore = usePanelRecommendationsStore((s) => s.loadMore)
   const detailOpen = useDetailStore((s) => s.open)
+  const categories = useCategoriesStore((s) => s.categories)
+  const addItemsToCategory = useCategoriesStore((s) => s.addItems)
+  const loadStats = useLibraryStore((s) => s.loadStats)
+  const [menu, setMenu] = useState<PanelMenu | null>(null)
 
-  // 触底加载
   const { ref: bottomRef, inView: bottomInView } = useInView({ rootMargin: '200px' })
   useEffect(() => {
     if (!open) return
     if (bottomInView) loadMore()
   }, [bottomInView, open, loadMore])
 
+  const handleLikeToggle = useCallback(async (item: MediaItem) => {
+    const newLiked = !item.liked
+    usePanelRecommendationsStore.setState((s) => ({
+      items: s.items.map((it) => it.id === item.id ? { ...it, liked: newLiked ? 1 : 0 } : it)
+    }))
+    await window.api.setLiked(item.id, newLiked)
+    void loadStats()
+  }, [loadStats])
+
+  const handleAddToCategory = useCallback(async (item: MediaItem, categoryId: number) => {
+    try {
+      await addItemsToCategory(categoryId, [item.id])
+    } catch (err) {
+      console.error('addItemsToCategory failed:', err)
+    }
+  }, [addItemsToCategory])
+
+  const handleReveal = useCallback(async (item: MediaItem) => {
+    try {
+      await window.api.revealInFolder(item.id)
+    } catch (err) {
+      console.error('revealInFolder failed:', err)
+    }
+  }, [])
+
+  const handleDislike = useCallback(async (item: MediaItem) => {
+    usePanelRecommendationsStore.setState((s) => ({
+      items: s.items.filter((it) => it.id !== item.id)
+    }))
+    try {
+      await window.api.setDisliked(item.id, true)
+    } catch (err) {
+      console.error('setDisliked failed:', err)
+    }
+  }, [])
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, item: MediaItem) => {
+    e.preventDefault()
+    setMenu({ x: e.clientX, y: e.clientY, item })
+  }, [])
+
+  const menuItems: ContextMenuItem[] = menu
+    ? [
+        {
+          key: 'like',
+          label: menu.item.liked ? '取消喜欢' : '喜欢',
+          icon: menu.item.liked ? HeartOff : Heart,
+          onClick: () => void handleLikeToggle(menu.item)
+        },
+        {
+          key: 'reveal',
+          label: '在文件管理器中显示',
+          icon: FolderOpen,
+          onClick: () => void handleReveal(menu.item)
+        },
+        ...(categories.length > 0
+          ? ([
+              { key: 'div-cat', divider: true },
+              { key: 'h-cat', header: true, label: '添加到分类' },
+              ...categories.map<ContextMenuItem>((c) => ({
+                key: `cat-${c.id}`,
+                label: c.name,
+                icon: Folder,
+                onClick: () => void handleAddToCategory(menu.item, c.id)
+              }))
+            ] as ContextMenuItem[])
+          : []),
+        { key: 'div-end', divider: true },
+        {
+          key: 'dislike',
+          label: '不感兴趣',
+          icon: EyeOff,
+          danger: true,
+          onClick: () => void handleDislike(menu.item)
+        }
+      ]
+    : []
+
   return (
     <aside
       className={clsx(
         'relative flex-shrink-0 h-full overflow-hidden',
-        'bg-black/40 backdrop-blur-md border-l border-white/10',
+        isLight
+          ? 'bg-secondary border-l border-border'
+          : 'bg-black/40 backdrop-blur-md border-l border-white/10',
         'transition-[width] duration-[250ms] ease-out'
       )}
       style={{ width: open ? PANEL_WIDTH : 0 }}
       aria-hidden={!open}
-      // 防滚轮穿透：面板内滚动只用于浏览推荐列表，不应触发外层切大图
       onWheel={(e) => e.stopPropagation()}
     >
-      {/* 内层固定宽度，避免收起动画过程中 grid 列宽随父宽度抖动 */}
       <div className="h-full flex flex-col" style={{ width: PANEL_WIDTH }}>
-        <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between flex-shrink-0">
-          <span className="text-sm font-medium text-white/85">相关推荐</span>
-          <span className="text-xs text-white/40 tabular-nums">
-            {items.length > 0 ? `${items.length} 张` : ''}
-          </span>
-        </div>
-
         <div className="flex-1 overflow-y-auto px-3 py-3 scroll-smooth">
           <div className="grid grid-cols-2 gap-2.5">
             {items.map((item) => (
               <RecommendationItem
                 key={item.id}
                 item={item}
-                onClick={() => detailOpen(item)}
+                onOpen={() => detailOpen(item)}
+                onLikeToggle={() => void handleLikeToggle(item)}
+                onContextMenu={(e) => handleContextMenu(e, item)}
               />
             ))}
           </div>
           {items.length > 0 && <div ref={bottomRef} className="h-1" />}
         </div>
       </div>
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </aside>
   )
 }
 
-/** d 面板单卡：固定 3:4，缩略图 absolute 充满、onLoad 淡入；视频右上角 Play 角标 + 右下时长。
- *  小卡密度高 + 同屏多卡 + 用户视线在大图，刻意不做 hover-play —— 视频缩略图（webp）已经
- *  足够识别，避开主瀑布流踩过的 video 元素并发坑。
- *  容器自身 mount 后下一帧切到 visible，触发 fade+1px 上移 ——「pop in」效果。
- *  本地 webp 缩略图通常已被 OS 缓存，<img> 的 onLoad 几乎与 mount 同步，不会先看见空底色再看见图。
- */
 function RecommendationItem({
   item,
-  onClick,
+  onOpen,
+  onLikeToggle,
+  onContextMenu,
 }: {
   item: MediaItem
-  onClick: () => void
+  onOpen: () => void
+  onLikeToggle: () => void
+  onContextMenu: (e: React.MouseEvent) => void
 }): React.JSX.Element {
+  const [hovered, setHovered] = useState(false)
   const [imgError, setImgError] = useState(false)
-  // 容器进入动效：mount 后下一帧切到 visible，触发 transition
   const [visible, setVisible] = useState(false)
+
   useEffect(() => {
     const raf = requestAnimationFrame(() => setVisible(true))
     return () => cancelAnimationFrame(raf)
   }, [])
+
+  const liked = !!item.liked
   const isVideo = item.type === 'video'
 
   return (
-    <button
-      onClick={onClick}
+    <div
       className={clsx(
-        'relative w-full overflow-hidden rounded-md hover:ring-2 hover:ring-white/40 focus:outline-none',
+        'relative w-full overflow-hidden rounded-md cursor-pointer select-none',
         'transition-[opacity,transform] duration-200 ease-out',
         visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'
       )}
       style={{ aspectRatio: '3 / 4' }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={onOpen}
+      onContextMenu={(e) => { e.preventDefault(); onContextMenu(e) }}
     >
       {imgError ? (
-        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-white/40 bg-white/5">
+        <div className="absolute inset-0 flex items-center justify-center text-[11px] text-muted-foreground bg-foreground/[0.05]">
           加载失败
         </div>
       ) : (
@@ -712,6 +810,41 @@ function RecommendationItem({
           onError={() => setImgError(true)}
         />
       )}
+
+      {/* hover 底部渐变遮罩 */}
+      <div
+        className={clsx(
+          'absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent transition-opacity',
+          hovered ? 'opacity-100' : 'opacity-0'
+        )}
+      />
+
+      {/* 爱心按钮 bottom-left */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onLikeToggle() }}
+        className={clsx(
+          'absolute bottom-1.5 left-1.5 p-1.5 rounded-full backdrop-blur transition-all',
+          hovered || liked ? 'opacity-100' : 'opacity-0',
+          liked
+            ? 'bg-pink-500/90 text-white'
+            : 'bg-black/40 text-white hover:bg-pink-500/80'
+        )}
+      >
+        <Heart className={clsx('w-3.5 h-3.5', liked && 'fill-current')} />
+      </button>
+
+      {/* 三点菜单 top-left */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onContextMenu(e) }}
+        className={clsx(
+          'absolute top-1.5 left-1.5 p-1 rounded-full bg-black/40 backdrop-blur text-white transition-opacity',
+          hovered ? 'opacity-100' : 'opacity-0'
+        )}
+      >
+        <MoreVertical className="w-3.5 h-3.5" />
+      </button>
+
+      {/* 视频徽章（渲染在最顶层，始终可见） */}
       {isVideo && !imgError && (
         <>
           <div className="absolute top-1.5 right-1.5 grid place-items-center w-6 h-6 rounded-full bg-black/55 backdrop-blur">
@@ -724,7 +857,7 @@ function RecommendationItem({
           )}
         </>
       )}
-    </button>
+    </div>
   )
 }
 
@@ -788,8 +921,8 @@ function Breadcrumb({
       {/* rootPath 以上：灰化、半透、不可点、不加粗 */}
       {rootParts.map((seg, i) => (
         <span key={`above-${i}`} className="flex items-center">
-          <span className="font-normal text-white/30 px-1">{seg}</span>
-          <ChevronRight className="w-4 h-4 text-white/25 flex-shrink-0" />
+          <span className="font-normal text-foreground/30 px-1">{seg}</span>
+          <ChevronRight className="w-4 h-4 text-foreground/25 flex-shrink-0" />
         </span>
       ))}
 
@@ -804,13 +937,13 @@ function Breadcrumb({
               onAuxClick={(e) => { if (e.button === 1) { e.stopPropagation(); void window.api.openFolder(rootSegPath) } }}
               className={clsx(
                 'px-1 py-0.5 rounded font-semibold transition-colors focus:outline-none focus-visible:outline-none',
-                isActive ? 'text-primary' : 'text-white/85 hover:text-white'
+                isActive ? 'text-primary' : 'text-foreground/85 hover:text-foreground'
               )}
             >
               {rootParts[rootParts.length - 1] ?? rootSegPath}
             </button>
             {relParts.length > 0 && (
-              <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0" />
+              <ChevronRight className="w-4 h-4 text-foreground/30 flex-shrink-0" />
             )}
           </span>
         )
@@ -829,12 +962,12 @@ function Breadcrumb({
               onAuxClick={(e) => { if (e.button === 1) { e.stopPropagation(); void window.api.openFolder(absPath) } }}
               className={clsx(
                 'px-1 py-0.5 rounded font-semibold transition-colors focus:outline-none focus-visible:outline-none',
-                isActive ? 'text-primary' : 'text-white/85 hover:text-white'
+                isActive ? 'text-primary' : 'text-foreground/85 hover:text-foreground'
               )}
             >
               {seg}
             </button>
-            <ChevronRight className="w-4 h-4 text-white/30 flex-shrink-0" />
+            <ChevronRight className="w-4 h-4 text-foreground/30 flex-shrink-0" />
           </span>
         )
       })}
@@ -843,7 +976,7 @@ function Breadcrumb({
       {(() => {
         const filename = item.path.replace(/\\/g, '/').split('/').pop() ?? ''
         return (
-          <span className="font-normal text-white/40 px-1">{filename}</span>
+          <span className="font-normal text-foreground/40 px-1">{filename}</span>
         )
       })()}
     </div>

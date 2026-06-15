@@ -513,7 +513,7 @@ function App(): React.JSX.Element {
             )}
           </header>
 
-          <div className="flex-1 bg-background">
+          <div className={clsx('flex-1', theme === 'light' ? 'bg-[#dbd8d6]' : 'bg-background')}>
             {isScanning ? (
               <ScanProgressPanel progress={scanProgress} />
             ) : !rootPath ? (
