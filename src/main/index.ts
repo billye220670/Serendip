@@ -30,6 +30,20 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     backgroundColor: '#0c0a09',
+    // 自绘标题栏：Win/Linux 用 WCO（系统在右上角自绘最小化/最大化/关闭按钮，
+    // 业务区接管除按钮外的整条顶栏）；macOS 走默认 hidden（信号灯保留在左上）
+    titleBarStyle: 'hidden',
+    ...(process.platform === 'win32' || process.platform === 'linux'
+      ? {
+          titleBarOverlay: {
+            // 给一个略实一点的背景而不是全透明，否则亮色主题下 OS 自绘的 hover 高亮
+            // （半透灰）几乎看不出来。具体颜色由渲染层在主题切换时通过 IPC 重设
+            color: '#f0eeec',
+            symbolColor: '#444444',
+            height: 64
+          }
+        }
+      : {}),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),

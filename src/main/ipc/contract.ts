@@ -46,6 +46,10 @@ export interface SerendipAPI {
 
   // ===== 进度订阅 =====
   onScanProgress(callback: (progress: ScanProgress) => void): () => void
+
+  // ===== 窗口装饰（自绘标题栏） =====
+  /** 设置 Windows Controls Overlay 的配色。theme 派生标准色；color/symbolColor 可直接覆盖（详情页用精确背景色） */
+  setTitleBarOverlay(opts: { visible?: boolean; theme?: 'light' | 'dark'; color?: string; symbolColor?: string }): Promise<void>
 }
 
 declare global {
@@ -81,5 +85,6 @@ export const IPC = {
   ADD_ITEMS_TO_CATEGORY: 'serendip:addItemsToCategory',
   REMOVE_ITEM_FROM_CATEGORY: 'serendip:removeItemFromCategory',
   REMOVE_ITEMS_FROM_CATEGORY: 'serendip:removeItemsFromCategory',
-  GET_FILE_CATEGORY_IDS: 'serendip:getFileCategoryIds'
+  GET_FILE_CATEGORY_IDS: 'serendip:getFileCategoryIds',
+  SET_TITLE_BAR_OVERLAY: 'serendip:setTitleBarOverlay'
 } as const

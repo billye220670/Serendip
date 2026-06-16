@@ -16,6 +16,8 @@ interface UIState {
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setExploreMode: (mode: ExploreMode) => void
+  /** 直接设定瀑布流缩略图档位 */
+  setGridSize: (size: GridSize) => void
   /** 循环切换 小 → 中 → 大 → 小 */
   cycleGridSize: () => void
   toggleSidebar: () => void
@@ -45,6 +47,8 @@ export const useUIStore = create<UIState>()(
       }),
 
       setExploreMode: (exploreMode) => set({ exploreMode }),
+
+      setGridSize: (gridSize) => set({ gridSize }),
 
       cycleGridSize: () =>
         set((state) => {

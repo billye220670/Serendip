@@ -180,6 +180,45 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.GET_FILE_CATEGORY_IDS, (_event, fileId: number) =>
     getFileCategoryIds(fileId)
   )
+
+  // ===== 窗口装饰 =====
+  // 设置 WCO（Windows Controls Overlay）的可见性与符号色。
+  // - 详情页打开 → 仍保持可见，业务区让出顶部 64px（见渲染层 Detail.tsx 的 padding）
+  // - 主题切换 → 重设 color + symbolColor，让按钮区与 header 视觉协调
+  //   color 不能用全透明：透明背景下 OS 自绘的 hover 高亮（半透灰）在亮色主题下几乎看不出来
+  //   所以这里给一个接近 header 玻璃态视觉的近似色，让 hover 时 Windows 的暗一档高亮可见
+  // macOS 走默认 hidden 信号灯，setWindowControlsOverlay 不存在，调用直接静默返回。
+  ipcMain.handle(
+    IPC.SET_TITLE_BAR_OVERLAY,
+    (event, opts: { visible?: boolean; theme?: 'light' | 'dark'; color?: string; symbolColor?: string }) => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      if (!win) return
+      // win.setWindowControlsOverlay 仅 Win/Linux 存在
+      const setOverlay = (
+        win as unknown as {
+          setWindowControlsOverlay?: (o: {
+            color?: string
+            symbolColor?: string
+            height?: number
+          }) => void
+        }
+      ).setWindowControlsOverlay
+      if (typeof setOverlay !== 'function') return
+
+      const isDark = opts.theme === 'dark'
+      // color/symbolColor 直接传入时优先使用，否则由 theme 派生
+      // 详情页传 '#00000000' 全透明，沉浸式；主页传略实色让 OS hover 高亮可见
+      const color = opts.color ?? (isDark ? '#1f1d1b' : '#f0eeec')
+      const symbolColor = opts.symbolColor ?? (isDark ? '#cccccc' : '#444444')
+
+      if (opts.visible === false) {
+        // 兼容老调用：把符号色压成透明。当前不再走这个分支，但保留以防未来需要
+        setOverlay({ color, symbolColor: '#00000000' })
+      } else {
+        setOverlay({ color, symbolColor })
+      }
+    }
+  )
 }
 
 // 工具：向所有窗口广播进度（用于在异步过程中通知渲染层）

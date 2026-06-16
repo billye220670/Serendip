@@ -55,7 +55,9 @@ const api: SerendipAPI = {
     return () => {
       ipcRenderer.off(IPC.SCAN_PROGRESS, handler)
     }
-  }
+  },
+
+  setTitleBarOverlay: (opts) => ipcRenderer.invoke(IPC.SET_TITLE_BAR_OVERLAY, opts)
 }
 
 if (process.contextIsolated) {

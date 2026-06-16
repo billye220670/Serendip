@@ -31,6 +31,13 @@ export function DetailView(): React.JSX.Element | null {
   const theme = useUIStore((s) => s.theme)
   const isLight = theme === 'light'
 
+  const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement)
+  useEffect(() => {
+    const handler = (): void => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', handler)
+    return () => document.removeEventListener('fullscreenchange', handler)
+  }, [])
+
   const currentItem = sequence[cursor]?.item ?? null
   const resetPanel = usePanelRecommendationsStore((s) => s.reset)
   const destroyPanel = usePanelRecommendationsStore((s) => s.destroy)
@@ -134,6 +141,18 @@ export function DetailView(): React.JSX.Element | null {
     return undefined
   }, [isOpen])
 
+  // 详情页打开时 WCO 全透明（沉浸），关闭时恢复 header 色
+  useEffect(() => {
+    if (isOpen) {
+      void window.api.setTitleBarOverlay({
+        color: '#00000000',
+        symbolColor: isLight ? '#444444' : '#cccccc'
+      })
+    } else {
+      void window.api.setTitleBarOverlay({ theme: isLight ? 'light' : 'dark' })
+    }
+  }, [isOpen, isLight])
+
   // 打开时锁定 body 滚动，防止滚轮穿透到底层瀑布流
   useEffect(() => {
     if (isOpen) {
@@ -198,21 +217,23 @@ export function DetailView(): React.JSX.Element | null {
       )}
       onWheel={handleWheel}
     >
-      {/* 左区（主舞台）：relative 让顶栏渐变 / 顶栏 / 缩略图条以 absolute 锚到左区。
-          flex-1 + min-w-0 让右侧面板挤压时宽度自然让出 */}
       <div className="relative flex-1 min-w-0 flex flex-col items-center justify-center">
-        {/* 顶部黑色渐变遮罩：从顶部向下淡出，提升面包屑/按钮在亮图上的可读性 */}
+        {/* 顶部渐变遮罩：从窗口顶端向下淡出，pointer-events-none 不干扰拖拽 */}
         <div
-          className="absolute top-0 left-0 right-0 h-28 z-10 pointer-events-none"
+          className="absolute left-0 right-0 top-0 h-40 z-10 pointer-events-none"
           style={{
             background: isLight
-              ? 'linear-gradient(to bottom, rgba(214,211,209,0.92), rgba(214,211,209,0.45), transparent)'
-              : 'linear-gradient(to bottom, rgba(0,0,0,0.75), rgba(0,0,0,0.4), transparent)',
+              ? 'linear-gradient(to bottom, rgba(214,211,209,0.97) 0%, rgba(214,211,209,0.7) 40%, rgba(214,211,209,0.2) 75%, transparent 100%)'
+              : 'linear-gradient(to bottom, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.2) 75%, transparent 100%)'
           }}
         />
 
-        {/* 顶栏：后退 + 面包屑 + 面板开关。right-0 即左区右边界，按钮自然贴近面板 */}
-        <div className="absolute top-0 left-0 right-0 z-10 flex items-center gap-3 px-4 py-3">
+        {/* 顶栏容器：整行设为可拖拽区域，按钮/面包屑单独设 no-drag 覆盖，
+            这样点按钮正常响应 click，点空白区域可拖动窗口 */}
+        <div
+          className="absolute left-0 right-0 top-0 z-20 flex items-center gap-3 px-4 py-3"
+          style={{ paddingRight: 156, WebkitAppRegion: 'drag' } as React.CSSProperties}
+        >
           <button
             onClick={close}
             aria-label="后退"
@@ -220,6 +241,7 @@ export function DetailView(): React.JSX.Element | null {
               'flex-shrink-0 grid place-items-center p-3 rounded-full transition-colors focus:outline-none focus-visible:outline-none backdrop-blur-sm',
               isLight ? 'bg-white/70 text-gray-900 hover:bg-white/85' : 'bg-black/45 text-white hover:bg-black/65'
             )}
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
@@ -231,18 +253,21 @@ export function DetailView(): React.JSX.Element | null {
               onSetScope={setScope}
             />
           </div>
-          <button
-            onClick={togglePanel}
-            aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
-            title={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'}
-            className={clsx(
-              'flex-shrink-0 grid place-items-center p-3 rounded-full transition-colors focus:outline-none focus-visible:outline-none backdrop-blur-sm',
-              isLight ? 'bg-white/70 text-gray-900 hover:bg-white/85' : 'bg-black/45 text-white hover:bg-black/65'
-            )}
-          >
-            {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
-          </button>
         </div>
+
+        {/* 面板开关按钮：fixed 定位；全屏时贴右，非全屏时让出 WCO 系统按钮区 */}
+        <button
+          onClick={togglePanel}
+          aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
+          title={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'}
+          className={clsx(
+            'fixed z-[60] grid place-items-center p-2 rounded-lg transition-colors focus:outline-none focus-visible:outline-none',
+            isLight ? 'text-gray-700 hover:bg-black/10' : 'text-white/80 hover:bg-white/15'
+          )}
+          style={{ top: 16, right: isFullscreen ? 8 : 148, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
+          {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
+        </button>
 
         {/* 内容区（瞬切，无位移动效）。父容器宽度随面板挤压收缩，img 自动 fit */}
         <div className="w-full h-full flex items-center justify-center">
@@ -257,7 +282,7 @@ export function DetailView(): React.JSX.Element | null {
         <ThumbStrip sequence={sequence} cursor={cursor} jumpTo={jumpTo} />
 
         {/* 底部左侧操作区：喜欢(f) + 分隔线 + 分类入口(h)，不与缩略图条争位 */}
-        <div className="absolute bottom-6 left-4 z-20 flex items-center gap-2">
+        <div className="absolute bottom-5 left-4 z-20 flex items-center gap-2">
           {/* f：喜欢 */}
           <button
             onClick={() => { void handleLikeToggle() }}
@@ -722,7 +747,7 @@ function RecommendationsPanel({
   return (
     <aside
       className={clsx(
-        'relative flex-shrink-0 h-full overflow-hidden',
+        'relative flex-shrink-0 overflow-hidden',
         isLight
           ? 'bg-secondary border-l border-border'
           : 'bg-black/40 backdrop-blur-md border-l border-white/10',
@@ -733,6 +758,8 @@ function RecommendationsPanel({
       onWheel={(e) => e.stopPropagation()}
     >
       <div className="h-full flex flex-col" style={{ width: PANEL_WIDTH }}>
+        {/* WCO 占位：推荐内容不进入系统按钮覆盖区域 */}
+        <div className="flex-shrink-0" style={{ height: 64 }} />
         <div className="flex-1 overflow-y-auto px-3 py-3 scroll-smooth">
           <div className="grid grid-cols-2 gap-2.5">
             {items.map((item) => (
@@ -918,11 +945,11 @@ function Breadcrumb({
 
   return (
     <div className="flex items-center flex-wrap gap-0 min-w-0 text-lg select-none">
-      {/* rootPath 以上：灰化、半透、不可点、不加粗 */}
+      {/* rootPath 以上：灰化、更半透、不可点 */}
       {rootParts.map((seg, i) => (
-        <span key={`above-${i}`} className="flex items-center">
-          <span className="font-normal text-foreground/30 px-1">{seg}</span>
-          <ChevronRight className="w-4 h-4 text-foreground/25 flex-shrink-0" />
+        <span key={`above-${i}`} className="flex items-center opacity-35">
+          <span className="font-normal text-foreground px-1">{seg}</span>
+          <ChevronRight className="w-4 h-4 text-foreground flex-shrink-0" />
         </span>
       ))}
 
@@ -939,11 +966,12 @@ function Breadcrumb({
                 'px-1 py-0.5 rounded font-semibold transition-colors focus:outline-none focus-visible:outline-none',
                 isActive ? 'text-primary' : 'text-foreground/85 hover:text-foreground'
               )}
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               {rootParts[rootParts.length - 1] ?? rootSegPath}
             </button>
             {relParts.length > 0 && (
-              <ChevronRight className="w-4 h-4 text-foreground/30 flex-shrink-0" />
+              <ChevronRight className="w-4 h-4 text-foreground/20 flex-shrink-0" />
             )}
           </span>
         )
@@ -964,10 +992,11 @@ function Breadcrumb({
                 'px-1 py-0.5 rounded font-semibold transition-colors focus:outline-none focus-visible:outline-none',
                 isActive ? 'text-primary' : 'text-foreground/85 hover:text-foreground'
               )}
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
             >
               {seg}
             </button>
-            <ChevronRight className="w-4 h-4 text-foreground/30 flex-shrink-0" />
+            <ChevronRight className="w-4 h-4 text-foreground/20 flex-shrink-0" />
           </span>
         )
       })}
@@ -976,7 +1005,7 @@ function Breadcrumb({
       {(() => {
         const filename = item.path.replace(/\\/g, '/').split('/').pop() ?? ''
         return (
-          <span className="font-normal text-foreground/40 px-1">{filename}</span>
+          <span className="font-normal text-foreground opacity-35 px-1">{filename}</span>
         )
       })()}
     </div>

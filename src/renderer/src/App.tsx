@@ -41,18 +41,31 @@ import {
   Loader2,
   RefreshCw,
   Plus,
-  LayoutGrid,
   FolderInput,
   Copy,
   FolderOpen,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  SlidersHorizontal
 } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../main/categories'
 import type { MediaItem } from '../../main/recommender'
+import type { GridSize } from './stores/ui'
+import { ScrollContainerContext } from './lib/scrollContainer'
 
 type DragType = 'category' | 'media' | null
+
+/**
+ * 自绘标题栏拖拽样式辅助 —— -webkit-app-region 不在标准 CSSProperties 类型里，
+ * 用这两个常量统一加上 cast，避免每次都要写 `as React.CSSProperties`。
+ */
+const DRAGGABLE: React.CSSProperties = {
+  WebkitAppRegion: 'drag'
+} as unknown as React.CSSProperties
+const NOT_DRAGGABLE: React.CSSProperties = {
+  WebkitAppRegion: 'no-drag'
+} as unknown as React.CSSProperties
 
 /** 当前拖拽中的对象，用于渲染 DragOverlay 浮层 */
 type ActiveDrag =
@@ -102,7 +115,6 @@ const collisionDetection: CollisionDetection = (args) => {
 function App(): React.JSX.Element {
   const { theme, toggleTheme, exploreMode, setExploreMode } = useUIStore()
   const gridSize = useUIStore((s) => s.gridSize)
-  const cycleGridSize = useUIStore((s) => s.cycleGridSize)
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
   const isDetailOpen = useDetailStore((s) => s.isOpen)
@@ -151,6 +163,11 @@ function App(): React.JSX.Element {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   )
+
+  // 主区滚动容器 —— MasonryGrid 通过 ScrollContainerProvider 拿到 element 本身，
+  // 用容器的 scrollTop / clientHeight 替代默认的 window 滚动模型。
+  // 用 state（不是 ref）：ref.current 变化不触发 re-render，孩子拿不到 element ready 的信号
+  const [mainEl, setMainEl] = useState<HTMLElement | null>(null)
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
@@ -336,6 +353,15 @@ function App(): React.JSX.Element {
     }
   }
 
+  // ===== 标题栏：根据主题同步 WCO（系统自绘按钮）配色 =====
+  // WCO 始终可见。详情页打开时不再隐藏按钮 —— 它由顶部 64px 留白让位（见 Detail.tsx）
+  // 切主题时同步符号色与背景色，让 OS 自绘的 hover 高亮在亮/暗主题下都看得到
+  useEffect(() => {
+    void window.api.setTitleBarOverlay({ theme }).catch(() => {
+      /* macOS 等不支持 WCO 的平台静默失败 */
+    })
+  }, [theme])
+
   return (
     <DndContext
       sensors={sensors}
@@ -349,14 +375,21 @@ function App(): React.JSX.Element {
         setHoveredDropCategoryId(null)
       }}
     >
-      <div className="flex min-h-screen bg-background text-foreground">
-        {/* 左侧边栏 */}
-        <aside
-          className="flex-shrink-0 flex flex-col bg-sidebar h-screen sticky top-0 overflow-hidden transition-[width] duration-[250ms] ease-in-out"
-          style={{ width: sidebarCollapsed ? 70 : 240 }}
+      <div className="flex flex-col h-screen bg-background text-foreground overflow-hidden">
+        {/* 顶栏：横跨整个窗口宽度（含侧栏区域上方）。
+            - 自绘标题栏：整条都启用 -webkit-app-region: drag 当作系统标题栏拖拽
+            - 右侧预留 ~140px 给 Windows Controls Overlay 的最小化/最大化/关闭按钮
+            - 内部按钮 / 输入需 no-drag 才可点
+            - 不再 sticky —— 主区独立滚动，顶栏天然就是不滚的兄弟节点 */}
+        <header
+          className="h-16 flex-shrink-0 z-20 flex items-stretch border-b border-border bg-glass backdrop-blur-xl"
+          style={DRAGGABLE}
         >
-          {/* 标题栏 + 折叠按钮 */}
-          <div className="h-16 flex items-center px-4 justify-between flex-shrink-0">
+          {/* 左：品牌 + 折叠按钮（占侧栏宽度，与下方侧栏对齐） */}
+          <div
+            className="flex items-center px-4 justify-between flex-shrink-0 transition-[width] duration-[250ms] ease-in-out"
+            style={{ width: sidebarCollapsed ? 70 : 240 }}
+          >
             {!sidebarCollapsed && (
               <h1 className="text-xl font-bold text-primary truncate">Serendip</h1>
             )}
@@ -367,6 +400,7 @@ function App(): React.JSX.Element {
                 sidebarCollapsed && 'mx-auto'
               )}
               title={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
+              style={NOT_DRAGGABLE}
             >
               {sidebarCollapsed ? (
                 <ChevronRight className="w-4 h-4" />
@@ -376,104 +410,31 @@ function App(): React.JSX.Element {
             </button>
           </div>
 
-          <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">
-            <NavItem
-              icon={Compass}
-              label="探索"
-              active={view.kind === 'explore'}
-              collapsed={sidebarCollapsed}
-              onClick={() => setView({ kind: 'explore' })}
-            />
-            <NavItem
-              icon={Star}
-              label="评审"
-              active={view.kind === 'review'}
-              collapsed={sidebarCollapsed}
-              onClick={() => setView({ kind: 'review' })}
-            />
-            <NavItem
-              icon={Heart}
-              label="喜欢"
-              active={view.kind === 'liked'}
-              collapsed={sidebarCollapsed}
-              badge={!sidebarCollapsed && stats?.liked ? stats.liked : undefined}
-              onClick={() => setView({ kind: 'liked' })}
-            />
-
-            <div className="mt-6">
-              {!sidebarCollapsed && (
-                <div className="px-5 flex items-center justify-between py-2 text-xs font-semibold text-muted-foreground">
-                  <span>收藏分类</span>
-                  <button
-                    className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-sidebar-hover"
-                    title="新建分类"
-                    onClick={() => setShowCreate(true)}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-              {sidebarCollapsed && (
-                <div className="flex justify-center py-1.5">
-                  <button
-                    className="p-1 hover:text-foreground text-muted-foreground hover:bg-sidebar-hover rounded transition-colors"
-                    title="新建分类"
-                    onClick={() => setShowCreate(true)}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
-              )}
-
-              <CategoryList
-                activeDragType={dragType}
-                hoveredDropCategoryId={hoveredDropCategoryId}
-                collapsed={sidebarCollapsed}
-                onRename={(c) => setRenameTarget(c)}
-                onDelete={(c) => setDeleteTarget(c)}
-              />
-            </div>
-          </nav>
-
-          {/* 底部：仅主题切换 */}
-          <div className="p-3 flex-shrink-0">
-            <div className={clsx('flex', sidebarCollapsed ? 'justify-center' : 'justify-start')}>
-              <button
-                onClick={toggleTheme}
-                className="p-2 rounded-lg hover:bg-sidebar-hover transition-colors"
-                title="切换主题"
-              >
-                {theme === 'light' ? (
-                  <Moon className="w-5 h-5" />
-                ) : (
-                  <Sun className="w-5 h-5" />
-                )}
-              </button>
-            </div>
-          </div>
-        </aside>
-
-        {/* 右侧主区域 */}
-        <main className="flex-1 flex flex-col min-w-0 overflow-x-clip">
-          <header className="h-16 flex-shrink-0 sticky top-0 z-10 flex items-center px-6 border-b border-border gap-4 bg-glass backdrop-blur-xl">
+          {/* 中：根目录、扫描、评审进度等业务态 */}
+          <div className="flex-1 min-w-0 flex items-center px-4 gap-3">
             <button
               onClick={handleSelectRoot}
               disabled={isScanning}
-              className="p-2 hover:opacity-60 transition-opacity disabled:opacity-30"
+              className="p-2 hover:opacity-60 transition-opacity disabled:opacity-30 flex-shrink-0"
               title={rootPath ? '更换根目录' : '选择根目录'}
+              style={NOT_DRAGGABLE}
             >
               <FolderOpen className="w-5 h-5" />
             </button>
             {rootPath && (
               <>
-                <div className="text-sm text-muted-foreground truncate max-w-md">
+                <div
+                  className="text-sm text-muted-foreground truncate max-w-md"
+                  style={NOT_DRAGGABLE}
+                >
                   {rootPath}
                 </div>
                 <button
                   onClick={handleRescan}
                   disabled={isScanning}
-                  className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50"
+                  className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
                   title="重新扫描"
+                  style={NOT_DRAGGABLE}
                 >
                   <RefreshCw
                     className={clsx('w-4 h-4', isScanning && 'animate-spin')}
@@ -482,68 +443,150 @@ function App(): React.JSX.Element {
               </>
             )}
 
-            {/* 三段探索程度（只在探索视图下显示，分类视图无意义） */}
-            {view.kind === 'explore' && (
-              <div className="flex-1 flex items-center justify-center gap-1">
-                <SegmentButton
-                  label="更多喜欢"
-                  active={exploreMode === 'prefer'}
-                  onClick={() => setExploreMode('prefer')}
-                />
-                <SegmentButton
-                  label="均衡"
-                  active={exploreMode === 'balanced'}
-                  onClick={() => setExploreMode('balanced')}
-                />
-                <SegmentButton
-                  label="更多探索"
-                  active={exploreMode === 'explore'}
-                  onClick={() => setExploreMode('explore')}
-                />
-              </div>
-            )}
-
-            {/* 缩略图尺寸切换 — 评审模式无 masonry，不需要此按钮 */}
-            {rootPath && !isScanning && view.kind !== 'review' && (
-              <button
-                onClick={cycleGridSize}
-                className="ml-auto flex-shrink-0 flex items-center gap-1.5 px-2 py-1.5 text-sm transition-colors hover:text-primary"
-                title="切换缩略图大小"
-              >
-                <LayoutGrid className="w-4 h-4" />
-                <span className="w-3 text-center tabular-nums">
-                  {GRID_SIZE_LABEL[gridSize]}
-                </span>
-              </button>
-            )}
-
-            {/* 评审进度 — 仅评审模式显示，靠右 */}
+            {/* 评审进度 — 仅评审模式显示，靠中后部 */}
             {view.kind === 'review' && reviewProgress && (
-              <span className="ml-auto flex-shrink-0 text-sm text-muted-foreground">
+              <span className="ml-auto text-sm text-muted-foreground flex-shrink-0">
                 {reviewProgress.reviewed > 0
                   ? `已评审 ${reviewProgress.reviewed} 张`
                   : '开始评审'}
                 {reviewProgress.pending > 0 && ` · 还有约 ${reviewProgress.pending} 张`}
               </span>
             )}
-          </header>
-
-          <div className={clsx('flex-1', theme === 'light' ? 'bg-[#dbd8d6]' : 'bg-background')}>
-            {isScanning ? (
-              <ScanProgressPanel progress={scanProgress} />
-            ) : !rootPath ? (
-              <EmptyState onSelect={handleSelectRoot} />
-            ) : view.kind === 'review' ? (
-              <ReviewView />
-            ) : view.kind === 'liked' ? (
-              <LikedView />
-            ) : view.kind === 'category' ? (
-              <CategoryView key={view.id} categoryId={view.id} />
-            ) : (
-              <ExploreView />
-            )}
           </div>
-        </main>
+
+          {/* 右：设置面板按钮 + 系统按钮预留区。
+              gridSize、探索模式等收到这里的下拉面板里 */}
+          <div
+            className="flex items-center gap-1 pr-2 flex-shrink-0"
+            style={NOT_DRAGGABLE}
+          >
+            {rootPath && !isScanning && (
+              <SettingsPopover
+                showExploreMode={view.kind === 'explore'}
+                showGridSize={view.kind !== 'review'}
+                exploreMode={exploreMode}
+                setExploreMode={setExploreMode}
+                gridSize={gridSize}
+              />
+            )}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+              title="切换主题"
+            >
+              {theme === 'light' ? (
+                <Moon className="w-4 h-4" />
+              ) : (
+                <Sun className="w-4 h-4" />
+              )}
+            </button>
+            {/* 系统按钮（最小化/最大化/关闭）由 Electron WCO 在此处自绘，
+                这里占位 ~140px 避免内容压到按钮上。
+                macOS 走默认 hidden（信号灯在左上），不需要这块占位但 140px 留白也无碍 */}
+            <div className="w-[140px] flex-shrink-0" aria-hidden />
+          </div>
+        </header>
+
+        {/* 顶栏下方：侧栏 + 主区横排。row 固定高 = 视口剩余（顶栏不滚），
+            主区独立 overflow-y:auto —— 滚动条只在主区出现，不冲到顶栏头上 */}
+        <div className="flex flex-1 min-h-0">
+          {/* 左侧边栏：row 已经限制了高度，sidebar 直接撑满即可，无需 sticky */}
+          <aside
+            className="flex-shrink-0 flex flex-col bg-sidebar h-full overflow-hidden transition-[width] duration-[250ms] ease-in-out"
+            style={{ width: sidebarCollapsed ? 70 : 240 }}
+          >
+            <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">
+              <NavItem
+                icon={Compass}
+                label="探索"
+                active={view.kind === 'explore'}
+                collapsed={sidebarCollapsed}
+                onClick={() => setView({ kind: 'explore' })}
+              />
+              <NavItem
+                icon={Star}
+                label="评审"
+                active={view.kind === 'review'}
+                collapsed={sidebarCollapsed}
+                onClick={() => setView({ kind: 'review' })}
+              />
+              <NavItem
+                icon={Heart}
+                label="喜欢"
+                active={view.kind === 'liked'}
+                collapsed={sidebarCollapsed}
+                badge={!sidebarCollapsed && stats?.liked ? stats.liked : undefined}
+                onClick={() => setView({ kind: 'liked' })}
+              />
+
+              <div className="mt-6">
+                {!sidebarCollapsed && (
+                  <div className="px-5 flex items-center justify-between py-2 text-xs font-semibold text-muted-foreground">
+                    <span>收藏分类</span>
+                    <button
+                      className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-sidebar-hover"
+                      title="新建分类"
+                      onClick={() => setShowCreate(true)}
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+                {sidebarCollapsed && (
+                  <div className="flex justify-center py-1.5">
+                    <button
+                      className="p-1 hover:text-foreground text-muted-foreground hover:bg-sidebar-hover rounded transition-colors"
+                      title="新建分类"
+                      onClick={() => setShowCreate(true)}
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+
+                <CategoryList
+                  activeDragType={dragType}
+                  hoveredDropCategoryId={hoveredDropCategoryId}
+                  collapsed={sidebarCollapsed}
+                  onRename={(c) => setRenameTarget(c)}
+                  onDelete={(c) => setDeleteTarget(c)}
+                />
+              </div>
+            </nav>
+          </aside>
+
+          {/* 右侧主区域：独立滚动容器。MasonryGrid 通过 ScrollContainerProvider 拿到此 ref，
+              把 masonic 的滚动监听从 window 切到这里。
+              relative 让内部 offsetParent 链停在这里，便于 MasonryGrid 计算 grid 在
+              本容器内的 offsetTop（瀑布流 padding 等需要从 scrollTop 中扣掉） */}
+          <main
+            ref={setMainEl}
+            className={clsx(
+              'flex-1 min-w-0 overflow-y-auto overflow-x-clip relative',
+              theme === 'light' ? 'bg-[#dbd8d6]' : 'bg-background'
+            )}
+          >
+            <ScrollContainerContext.Provider value={mainEl}>
+              {/* min-h-full 让 EmptyState / ScanProgressPanel 用 h-full 仍能居中
+                  （main 是 overflow-y:auto，子节点默认按内容撑高，没有 flex 基线） */}
+              <div className="min-h-full">
+                {isScanning ? (
+                  <ScanProgressPanel progress={scanProgress} />
+                ) : !rootPath ? (
+                  <EmptyState onSelect={handleSelectRoot} />
+                ) : view.kind === 'review' ? (
+                  <ReviewView />
+                ) : view.kind === 'liked' ? (
+                  <LikedView />
+                ) : view.kind === 'category' ? (
+                  <CategoryView key={view.id} categoryId={view.id} />
+                ) : (
+                  <ExploreView />
+                )}
+              </div>
+            </ScrollContainerContext.Provider>
+          </main>
+        </div>
       </div>
 
       {/* 新建分类 */}
@@ -648,6 +691,136 @@ function SegmentButton({
     >
       {label}
     </button>
+  )
+}
+
+/**
+ * 顶栏右上角的设置面板：把缩略图大小（小/中/大）+ 探索程度三段切换收纳到一个下拉。
+ *
+ * 触发器是一个 SlidersHorizontal 图标按钮；点击切换面板。
+ * 面板锚定在按钮下方右侧，固定定位（避开顶栏边界），点击外部关闭。
+ * 渲染条件由父级控制（`showExploreMode` / `showGridSize` 决定面板内显示哪些块）。
+ */
+function SettingsPopover({
+  showExploreMode,
+  showGridSize,
+  exploreMode,
+  setExploreMode,
+  gridSize
+}: {
+  showExploreMode: boolean
+  showGridSize: boolean
+  exploreMode: 'prefer' | 'balanced' | 'explore'
+  setExploreMode: (m: 'prefer' | 'balanced' | 'explore') => void
+  gridSize: GridSize
+}): React.JSX.Element | null {
+  const setGridSize = useUIStore((s) => s.setGridSize)
+  const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null)
+
+  // 打开时计算面板位置（锚到按钮下方，靠右对齐）
+  useEffect(() => {
+    if (!open) return
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setAnchor({ top: r.bottom + 6, right: window.innerWidth - r.right })
+
+    // 点外关闭
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (panelRef.current?.contains(t)) return
+      if (btnRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  if (!showExploreMode && !showGridSize) return null
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={() => setOpen((v) => !v)}
+        className={clsx(
+          'p-2 rounded-lg transition-colors',
+          open
+            ? 'bg-muted text-foreground'
+            : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+        )}
+        title="显示设置"
+        aria-expanded={open}
+      >
+        <SlidersHorizontal className="w-4 h-4" />
+      </button>
+      {open &&
+        anchor &&
+        createPortal(
+          <div
+            ref={panelRef}
+            className="fixed z-[150] min-w-[260px] rounded-xl border border-border bg-glass backdrop-blur-xl shadow-lg shadow-black/20 p-3 flex flex-col gap-3"
+            style={{ top: anchor.top, right: anchor.right }}
+          >
+            {showGridSize && (
+              <div className="flex flex-col gap-1.5">
+                <div className="text-xs font-semibold text-muted-foreground px-1">
+                  缩略图大小
+                </div>
+                <div className="flex items-center gap-1">
+                  {(['small', 'medium', 'large'] as const).map((sz) => (
+                    <button
+                      key={sz}
+                      onClick={() => setGridSize(sz)}
+                      className={clsx(
+                        'flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                        gridSize === sz
+                          ? 'bg-primary text-white'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+                      )}
+                    >
+                      {GRID_SIZE_LABEL[sz]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {showExploreMode && (
+              <div className="flex flex-col gap-1.5">
+                <div className="text-xs font-semibold text-muted-foreground px-1">
+                  探索程度
+                </div>
+                <div className="flex items-center gap-1">
+                  <SegmentButton
+                    label="更多喜欢"
+                    active={exploreMode === 'prefer'}
+                    onClick={() => setExploreMode('prefer')}
+                  />
+                  <SegmentButton
+                    label="均衡"
+                    active={exploreMode === 'balanced'}
+                    onClick={() => setExploreMode('balanced')}
+                  />
+                  <SegmentButton
+                    label="更多探索"
+                    active={exploreMode === 'explore'}
+                    onClick={() => setExploreMode('explore')}
+                  />
+                </div>
+              </div>
+            )}
+          </div>,
+          document.body
+        )}
+    </>
   )
 }
 
