@@ -17,6 +17,7 @@ import {
 import { arrayMove } from '@dnd-kit/sortable'
 import { getEventCoordinates } from '@dnd-kit/utilities'
 import { useUIStore } from './stores/ui'
+import { useDetailStore } from './stores/detail'
 import { useLibraryStore } from './stores/library'
 import { useCategoriesStore } from './stores/categories'
 import { useSelectionStore } from './stores/selection'
@@ -104,6 +105,7 @@ function App(): React.JSX.Element {
   const cycleGridSize = useUIStore((s) => s.cycleGridSize)
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
+  const isDetailOpen = useDetailStore((s) => s.isOpen)
   const {
     rootPath,
     isScanning,
@@ -149,6 +151,19 @@ function App(): React.JSX.Element {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   )
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if (isDetailOpen) return
+      if (e.key !== 'Tab') return
+      const tag = (e.target as HTMLElement).tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      e.preventDefault()
+      toggleSidebar()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isDetailOpen, toggleSidebar])
 
   useEffect(() => {
     loadCurrentRoot()
@@ -348,7 +363,7 @@ function App(): React.JSX.Element {
             <button
               onClick={toggleSidebar}
               className={clsx(
-                'p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground flex-shrink-0',
+                'p-1.5 rounded-lg hover:bg-sidebar-hover transition-colors text-muted-foreground hover:text-foreground flex-shrink-0',
                 sidebarCollapsed && 'mx-auto'
               )}
               title={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
@@ -390,7 +405,7 @@ function App(): React.JSX.Element {
                 <div className="px-5 flex items-center justify-between py-2 text-xs font-semibold text-muted-foreground">
                   <span>收藏分类</span>
                   <button
-                    className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-muted"
+                    className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-sidebar-hover"
                     title="新建分类"
                     onClick={() => setShowCreate(true)}
                   >
@@ -401,7 +416,7 @@ function App(): React.JSX.Element {
               {sidebarCollapsed && (
                 <div className="flex justify-center py-1.5">
                   <button
-                    className="p-1 hover:text-foreground text-muted-foreground hover:bg-muted rounded transition-colors"
+                    className="p-1 hover:text-foreground text-muted-foreground hover:bg-sidebar-hover rounded transition-colors"
                     title="新建分类"
                     onClick={() => setShowCreate(true)}
                   >
@@ -425,7 +440,7 @@ function App(): React.JSX.Element {
             <div className={clsx('flex', sidebarCollapsed ? 'justify-center' : 'justify-start')}>
               <button
                 onClick={toggleTheme}
-                className="p-2 rounded-lg hover:bg-muted transition-colors"
+                className="p-2 rounded-lg hover:bg-sidebar-hover transition-colors"
                 title="切换主题"
               >
                 {theme === 'light' ? (
@@ -781,7 +796,7 @@ function NavItem({
         className={clsx(
           'w-full flex items-center gap-3 py-3 text-sm font-medium transition-colors',
           collapsed ? 'justify-center px-0' : 'px-5',
-          active ? 'text-primary' : 'text-foreground hover:bg-muted'
+          active ? 'text-primary' : 'text-foreground hover:bg-sidebar-hover'
         )}
       >
         <Icon className="w-5 h-5 flex-shrink-0" />

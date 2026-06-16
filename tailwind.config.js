@@ -19,6 +19,7 @@ export default {
         'muted-foreground': 'var(--color-muted-foreground)',
         glass: 'var(--color-glass)',
         sidebar: 'var(--color-sidebar)',
+        'sidebar-hover': 'var(--color-sidebar-hover)',
       },
     },
   },

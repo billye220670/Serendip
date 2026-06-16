@@ -173,7 +173,7 @@ function CategoryRow({
           'group flex items-center gap-2.5 py-3 text-sm cursor-pointer transition-colors',
           collapsed ? 'justify-center px-0' : 'px-5',
           isActive && 'text-primary',
-          !isActive && !isMediaHover && 'text-foreground hover:bg-muted',
+          !isActive && !isMediaHover && 'text-foreground hover:bg-sidebar-hover',
           isMediaHover && 'ring-2 ring-primary ring-inset bg-primary/15'
         )}
       >

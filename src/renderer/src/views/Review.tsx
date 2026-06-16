@@ -3,6 +3,7 @@ import { Undo2, SkipForward, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
 import { useCategoriesStore } from '../stores/categories'
 import { useLibraryStore } from '../stores/library'
+import { useUIStore } from '../stores/ui'
 import type { MediaItem } from '../../../main/recommender'
 
 type UndoAction =
@@ -20,6 +21,8 @@ export function ReviewView(): React.JSX.Element {
   const categories = useCategoriesStore((s) => s.categories)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const removeItemsFromCategory = useCategoriesStore((s) => s.removeItems)
+  const theme = useUIStore((s) => s.theme)
+  const isDark = theme === 'dark'
 
   const [queue, setQueue] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -445,7 +448,12 @@ export function ReviewView(): React.JSX.Element {
 
       {/* 撤销 — 左上角 */}
       <button
-        className="absolute top-8 left-8 z-20 p-3 rounded-full bg-black/50 text-white hover:bg-black/65 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
+        className={clsx(
+          'absolute top-8 left-8 z-20 p-3 rounded-full backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed',
+          isDark
+            ? 'bg-black/50 text-white hover:bg-black/65'
+            : 'bg-white/70 text-gray-900 hover:bg-white/85'
+        )}
         onClick={() => void doUndo()}
         disabled={undoStackRef.current.length === 0}
         title="撤销（Backspace）"
@@ -455,7 +463,12 @@ export function ReviewView(): React.JSX.Element {
 
       {/* 跳过 — 右上角 */}
       <button
-        className="absolute top-8 right-8 z-20 p-3 rounded-full bg-black/50 text-white hover:bg-black/65 backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed"
+        className={clsx(
+          'absolute top-8 right-8 z-20 p-3 rounded-full backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed',
+          isDark
+            ? 'bg-black/50 text-white hover:bg-black/65'
+            : 'bg-white/70 text-gray-900 hover:bg-white/85'
+        )}
         onClick={() => void doSkip()}
         disabled={!currentItem || isFly}
         title="跳过（Space）"
@@ -475,7 +488,9 @@ export function ReviewView(): React.JSX.Element {
                 'px-5 py-2 rounded-full text-base font-medium transition-colors backdrop-blur-md',
                 itemCategoryIds.has(cat.id)
                   ? 'bg-primary text-white'
-                  : 'bg-black/50 text-white/90 hover:bg-black/65 border border-white/10'
+                  : isDark
+                    ? 'bg-black/50 text-white/90 hover:bg-black/65 border border-white/10'
+                    : 'bg-white/70 text-gray-900 hover:bg-white/85 border border-black/10'
               )}
             >
               {cat.name}

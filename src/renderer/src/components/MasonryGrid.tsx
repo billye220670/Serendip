@@ -1,5 +1,13 @@
-import { createContext, useContext, useCallback, useEffect, useMemo } from 'react'
-import { Masonry, useInfiniteLoader, type RenderComponentProps } from 'masonic'
+import { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useInfiniteLoader,
+  usePositioner,
+  useResizeObserver,
+  useContainerPosition,
+  useScroller,
+  useMasonry,
+  type RenderComponentProps
+} from 'masonic'
 import { MediaCard } from './MediaCard'
 import { useUIStore } from '../stores/ui'
 import { TARGET_WIDTH } from '../lib/grid'
@@ -76,13 +84,44 @@ export function MasonryGrid({
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed)
   const columnWidth = TARGET_WIDTH[gridSize]
 
-  // 侧栏折叠改的是容器宽度（非 window），masonic 默认只在 window resize 时重测宽度。
-  // 动画（250ms）结束后派发一次 resize 触发重算：动画期间沿用旧布局、结束一次性 snap，
-  // 因虚拟化只重渲可见项，成本极低。配合 <main> 的 overflow-x-clip 裁掉展开瞬间的溢出。
+  // masonic 的 <Masonry> 内部以 window 尺寸作为 deps，侧边栏折叠不改变 window 尺寸，
+  // 所以改用底层 API 自己控制 containerWidth。
+  // 用 sidebarCollapsed 变化 + 260ms 延迟（动画 250ms 结束后）一次性读容器宽度，
+  // 动画过程中不触发，避免每帧抖动。window.resize 仍通过 useScroller 正常处理。
+  const containerRef = useRef<HTMLElement | null>(null)
+  const [containerWidth, setContainerWidth] = useState(() => window.innerWidth)
+
   useEffect(() => {
-    const t = window.setTimeout(() => window.dispatchEvent(new Event('resize')), 300)
+    const readWidth = (): void => {
+      const el = containerRef.current
+      setContainerWidth(el ? el.offsetWidth : window.innerWidth)
+    }
+    // 侧边栏动画结束后读一次
+    const t = window.setTimeout(readWidth, 260)
     return () => window.clearTimeout(t)
   }, [sidebarCollapsed])
+
+  // window resize 时也更新（用户拖动窗口边框）
+  useEffect(() => {
+    const onResize = (): void => {
+      const el = containerRef.current
+      setContainerWidth(el ? el.offsetWidth : window.innerWidth)
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const containerPos = useContainerPosition(containerRef, [containerWidth])
+  const positioner = usePositioner(
+    {
+      width: containerPos.width || containerWidth,
+      columnGutter: SPACING,
+      columnWidth
+    },
+    [resetKey]
+  )
+  const resizeObserver = useResizeObserver(positioner)
+  const { scrollTop, isScrolling } = useScroller(containerPos.offset)
 
   const handlers = useMemo<GridHandlers>(
     () => ({
@@ -101,19 +140,24 @@ export function MasonryGrid({
   }, [onLoadMore])
   const maybeLoadMore = useInfiniteLoader(loadMore, LOADER_OPTIONS)
 
+  const masonry = useMasonry({
+    positioner,
+    resizeObserver,
+    containerRef,
+    items,
+    scrollTop,
+    isScrolling,
+    height: window.innerHeight,
+    overscanBy: 2,
+    itemKey,
+    itemHeightEstimate: Math.round(columnWidth * 1.2),
+    render: MasonryCard,
+    onRender: onLoadMore ? maybeLoadMore : undefined
+  })
+
   return (
     <GridHandlersContext.Provider value={handlers}>
-      <Masonry
-        key={resetKey}
-        items={items}
-        columnGutter={SPACING}
-        columnWidth={columnWidth}
-        overscanBy={2}
-        itemKey={itemKey}
-        itemHeightEstimate={Math.round(columnWidth * 1.2)}
-        render={MasonryCard}
-        onRender={onLoadMore ? maybeLoadMore : undefined}
-      />
+      {masonry}
     </GridHandlersContext.Provider>
   )
 }

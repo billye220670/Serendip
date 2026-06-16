@@ -24,6 +24,7 @@
   --color-muted: #f5f5f4;
   --color-muted-foreground: #78716c;
   --color-sidebar: #e7e5e4;
+  --color-sidebar-hover: rgba(0, 0, 0, 0.09);
   --color-card-shadow: rgba(0, 0, 0, 0.06);
   --color-glass: rgba(255, 255, 255, 0.78);
 }
@@ -39,6 +40,7 @@
   --color-muted: #1c1917;
   --color-muted-foreground: #a8a29e;
   --color-sidebar: #161412;
+  --color-sidebar-hover: rgba(255, 255, 255, 0.09);
   --color-card-shadow: rgba(0, 0, 0, 0.4);
   --color-glass: rgba(0, 0, 0, 0.55);
 }
@@ -69,6 +71,11 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   user-select: none;
+}
+
+/* 全局去掉 focus outline（Electron 桌面应用，无键盘导航无障碍需求） */
+*:focus {
+  outline: none;
 }
 
 /* 滚动条样式 */

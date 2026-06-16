@@ -217,8 +217,8 @@ export function DetailView(): React.JSX.Element | null {
             onClick={close}
             aria-label="后退"
             className={clsx(
-              'flex-shrink-0 grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none focus-visible:outline-none',
-              isLight ? 'bg-black/10 text-foreground hover:bg-black/15' : 'bg-black/45 text-white hover:bg-black/65'
+              'flex-shrink-0 grid place-items-center p-3 rounded-full transition-colors focus:outline-none focus-visible:outline-none backdrop-blur-sm',
+              isLight ? 'bg-white/70 text-gray-900 hover:bg-white/85' : 'bg-black/45 text-white hover:bg-black/65'
             )}
           >
             <ChevronLeft className="w-6 h-6" />
@@ -236,8 +236,8 @@ export function DetailView(): React.JSX.Element | null {
             aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
             title={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'}
             className={clsx(
-              'flex-shrink-0 grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none focus-visible:outline-none',
-              isLight ? 'bg-black/10 text-foreground hover:bg-black/15' : 'bg-black/45 text-white hover:bg-black/65'
+              'flex-shrink-0 grid place-items-center p-3 rounded-full transition-colors focus:outline-none focus-visible:outline-none backdrop-blur-sm',
+              isLight ? 'bg-white/70 text-gray-900 hover:bg-white/85' : 'bg-black/45 text-white hover:bg-black/65'
             )}
           >
             {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
@@ -263,11 +263,11 @@ export function DetailView(): React.JSX.Element | null {
             onClick={() => { void handleLikeToggle() }}
             aria-label={itemLiked ? '取消喜欢' : '喜欢'}
             className={clsx(
-              'grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none',
+              'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
               itemLiked
                 ? 'bg-pink-500/90 text-white hover:bg-pink-400/90'
                 : isLight
-                  ? 'bg-black/10 text-foreground/60 hover:bg-black/15 hover:text-foreground'
+                  ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
                   : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
             )}
           >
@@ -283,11 +283,11 @@ export function DetailView(): React.JSX.Element | null {
               aria-label="管理分类"
               title="管理分类"
               className={clsx(
-                'grid place-items-center w-11 h-11 rounded-full transition-colors focus:outline-none',
+                'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
                 searchOpen
                   ? 'bg-primary text-white'
                   : isLight
-                    ? 'bg-black/10 text-foreground/60 hover:bg-black/15 hover:text-foreground'
+                    ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
                     : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
               )}
             >
