@@ -9,6 +9,7 @@ import { usePanelRecommendationsStore } from '../stores/panelRecommendations'
 import { useCategoriesStore } from '../stores/categories'
 import { CategorySearchPanel } from '../components/CategorySearchPanel'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
+import { IPC } from '../../../main/ipc/contract'
 import type { MediaItem } from '../../../main/recommender'
 
 /**
@@ -31,11 +32,11 @@ export function DetailView(): React.JSX.Element | null {
   const theme = useUIStore((s) => s.theme)
   const isLight = theme === 'light'
 
-  const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement)
+  const [isFullscreen, setIsFullscreen] = useState(false)
   useEffect(() => {
-    const handler = (): void => setIsFullscreen(!!document.fullscreenElement)
-    document.addEventListener('fullscreenchange', handler)
-    return () => document.removeEventListener('fullscreenchange', handler)
+    const handler = (_evt: unknown, isFs: boolean): void => setIsFullscreen(isFs)
+    window.electron.ipcRenderer.on(IPC.FULLSCREEN_CHANGE, handler)
+    return () => { window.electron.ipcRenderer.removeAllListeners(IPC.FULLSCREEN_CHANGE) }
   }, [])
 
   const currentItem = sequence[cursor]?.item ?? null

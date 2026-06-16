@@ -193,29 +193,23 @@ export function registerIpcHandlers(): void {
     (event, opts: { visible?: boolean; theme?: 'light' | 'dark'; color?: string; symbolColor?: string }) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win) return
-      // win.setWindowControlsOverlay 仅 Win/Linux 存在
-      const setOverlay = (
-        win as unknown as {
-          setWindowControlsOverlay?: (o: {
-            color?: string
-            symbolColor?: string
-            height?: number
-          }) => void
-        }
-      ).setWindowControlsOverlay
-      if (typeof setOverlay !== 'function') return
 
       const isDark = opts.theme === 'dark'
       // color/symbolColor 直接传入时优先使用，否则由 theme 派生
       // 详情页传 '#00000000' 全透明，沉浸式；主页传略实色让 OS hover 高亮可见
-      const color = opts.color ?? (isDark ? '#1f1d1b' : '#f0eeec')
+      // 亮色：接近 glass-over-background 的温暖近白；暗色：接近 glass-over-background 的近黑
+      const color = opts.color ?? (isDark ? '#111009' : '#f5f4f1')
       const symbolColor = opts.symbolColor ?? (isDark ? '#cccccc' : '#444444')
 
-      if (opts.visible === false) {
-        // 兼容老调用：把符号色压成透明。当前不再走这个分支，但保留以防未来需要
-        setOverlay({ color, symbolColor: '#00000000' })
-      } else {
-        setOverlay({ color, symbolColor })
+      try {
+        // Electron 28+ 正式 API：win.setTitleBarOverlay()
+        // macOS 无 WCO，调用会抛异常，catch 静默处理
+        win.setTitleBarOverlay({
+          color: opts.visible === false ? color : color,
+          symbolColor: opts.visible === false ? '#00000000' : symbolColor
+        })
+      } catch {
+        // macOS 等不支持 WCO 的平台静默忽略
       }
     }
   )

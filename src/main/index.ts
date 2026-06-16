@@ -3,6 +3,7 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpcHandlers } from './ipc/handlers'
+import { IPC } from './ipc/contract'
 import { getDatabase, closeDatabase } from './db'
 import { registerThumbProtocol } from './thumbnailer/protocol'
 import { scanRoot } from './scanner'
@@ -36,9 +37,8 @@ function createWindow(): void {
     ...(process.platform === 'win32' || process.platform === 'linux'
       ? {
           titleBarOverlay: {
-            // 给一个略实一点的背景而不是全透明，否则亮色主题下 OS 自绘的 hover 高亮
-            // （半透灰）几乎看不出来。具体颜色由渲染层在主题切换时通过 IPC 重设
-            color: '#f0eeec',
+            // 初始值走亮色主题（glass-over-background 的温暖近白），切主题时由渲染层通过 IPC 重设
+            color: '#f5f4f1',
             symbolColor: '#444444',
             height: 64
           }
@@ -53,6 +53,13 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  mainWindow.on('enter-full-screen', () => {
+    mainWindow.webContents.send(IPC.FULLSCREEN_CHANGE, true)
+  })
+  mainWindow.on('leave-full-screen', () => {
+    mainWindow.webContents.send(IPC.FULLSCREEN_CHANGE, false)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

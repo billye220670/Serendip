@@ -86,5 +86,6 @@ export const IPC = {
   REMOVE_ITEM_FROM_CATEGORY: 'serendip:removeItemFromCategory',
   REMOVE_ITEMS_FROM_CATEGORY: 'serendip:removeItemsFromCategory',
   GET_FILE_CATEGORY_IDS: 'serendip:getFileCategoryIds',
-  SET_TITLE_BAR_OVERLAY: 'serendip:setTitleBarOverlay'
+  SET_TITLE_BAR_OVERLAY: 'serendip:setTitleBarOverlay',
+  FULLSCREEN_CHANGE: 'serendip:fullscreenChange'
 } as const

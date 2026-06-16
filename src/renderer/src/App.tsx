@@ -52,6 +52,7 @@ import clsx from 'clsx'
 import type { Category } from '../../main/categories'
 import type { MediaItem } from '../../main/recommender'
 import type { GridSize } from './stores/ui'
+import { IPC } from '../../main/ipc/contract'
 import { ScrollContainerContext } from './lib/scrollContainer'
 
 type DragType = 'category' | 'media' | null
@@ -113,7 +114,7 @@ const collisionDetection: CollisionDetection = (args) => {
 }
 
 function App(): React.JSX.Element {
-  const { theme, toggleTheme, exploreMode, setExploreMode } = useUIStore()
+  const { theme, exploreMode, setExploreMode } = useUIStore()
   const gridSize = useUIStore((s) => s.gridSize)
   const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed)
   const toggleSidebar = useUIStore((s) => s.toggleSidebar)
@@ -168,6 +169,13 @@ function App(): React.JSX.Element {
   // 用容器的 scrollTop / clientHeight 替代默认的 window 滚动模型。
   // 用 state（不是 ref）：ref.current 变化不触发 re-render，孩子拿不到 element ready 的信号
   const [mainEl, setMainEl] = useState<HTMLElement | null>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  useEffect(() => {
+    const handler = (_evt: unknown, isFs: boolean): void => setIsFullscreen(isFs)
+    window.electron.ipcRenderer.on(IPC.FULLSCREEN_CHANGE, handler)
+    return () => { window.electron.ipcRenderer.removeAllListeners(IPC.FULLSCREEN_CHANGE) }
+  }, [])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent): void => {
@@ -382,35 +390,10 @@ function App(): React.JSX.Element {
             - 内部按钮 / 输入需 no-drag 才可点
             - 不再 sticky —— 主区独立滚动，顶栏天然就是不滚的兄弟节点 */}
         <header
-          className="h-16 flex-shrink-0 z-20 flex items-stretch border-b border-border bg-glass backdrop-blur-xl"
-          style={DRAGGABLE}
+          className="h-16 flex-shrink-0 z-20 flex items-stretch border-b border-border"
+          style={{ ...DRAGGABLE, backgroundColor: theme === 'dark' ? '#111009' : '#f5f4f1' }}
         >
-          {/* 左：品牌 + 折叠按钮（占侧栏宽度，与下方侧栏对齐） */}
-          <div
-            className="flex items-center px-4 justify-between flex-shrink-0 transition-[width] duration-[250ms] ease-in-out"
-            style={{ width: sidebarCollapsed ? 70 : 240 }}
-          >
-            {!sidebarCollapsed && (
-              <h1 className="text-xl font-bold text-primary truncate">Serendip</h1>
-            )}
-            <button
-              onClick={toggleSidebar}
-              className={clsx(
-                'p-1.5 rounded-lg hover:bg-sidebar-hover transition-colors text-muted-foreground hover:text-foreground flex-shrink-0',
-                sidebarCollapsed && 'mx-auto'
-              )}
-              title={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
-              style={NOT_DRAGGABLE}
-            >
-              {sidebarCollapsed ? (
-                <ChevronRight className="w-4 h-4" />
-              ) : (
-                <ChevronLeft className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-
-          {/* 中：根目录、扫描、评审进度等业务态 */}
+          {/* 左：根目录、扫描、评审进度等业务态，贴左 */}
           <div className="flex-1 min-w-0 flex items-center px-4 gap-3">
             <button
               onClick={handleSelectRoot}
@@ -454,36 +437,28 @@ function App(): React.JSX.Element {
             )}
           </div>
 
-          {/* 右：设置面板按钮 + 系统按钮预留区。
-              gridSize、探索模式等收到这里的下拉面板里 */}
+          {/* 右：设置面板按钮 + 系统按钮预留区 */}
           <div
             className="flex items-center gap-1 pr-2 flex-shrink-0"
             style={NOT_DRAGGABLE}
           >
-            {rootPath && !isScanning && (
-              <SettingsPopover
-                showExploreMode={view.kind === 'explore'}
-                showGridSize={view.kind !== 'review'}
-                exploreMode={exploreMode}
-                setExploreMode={setExploreMode}
-                gridSize={gridSize}
-              />
-            )}
-            <button
-              onClick={toggleTheme}
-              className="p-2 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-              title="切换主题"
-            >
-              {theme === 'light' ? (
-                <Moon className="w-4 h-4" />
-              ) : (
-                <Sun className="w-4 h-4" />
-              )}
-            </button>
+            <SettingsPopover
+              showExploreMode={view.kind === 'explore'}
+              showGridSize={view.kind !== 'review' && !!rootPath && !isScanning}
+              exploreMode={exploreMode}
+              setExploreMode={setExploreMode}
+              gridSize={gridSize}
+              theme={theme}
+            />
             {/* 系统按钮（最小化/最大化/关闭）由 Electron WCO 在此处自绘，
                 这里占位 ~140px 避免内容压到按钮上。
-                macOS 走默认 hidden（信号灯在左上），不需要这块占位但 140px 留白也无碍 */}
-            <div className="w-[140px] flex-shrink-0" aria-hidden />
+                macOS 走默认 hidden（信号灯在左上），不需要这块占位但 140px 留白也无碍。
+                F11 全屏时 WCO 消失，占位收为 0 让按钮贴右 */}
+            <div
+              className="flex-shrink-0 transition-[width] duration-[250ms]"
+              style={{ width: isFullscreen ? 0 : 140 }}
+              aria-hidden
+            />
           </div>
         </header>
 
@@ -495,7 +470,29 @@ function App(): React.JSX.Element {
             className="flex-shrink-0 flex flex-col bg-sidebar h-full overflow-hidden transition-[width] duration-[250ms] ease-in-out"
             style={{ width: sidebarCollapsed ? 70 : 240 }}
           >
-            <nav className="flex-1 py-4 overflow-y-auto overflow-x-hidden">
+            {/* 侧栏顶部：品牌 + 折叠按钮，高度与顶栏齐 */}
+            <div
+              className={clsx(
+                'h-16 flex-shrink-0 flex items-center',
+                sidebarCollapsed ? 'justify-center px-2' : 'justify-between px-4'
+              )}
+            >
+              {!sidebarCollapsed && (
+                <h1 className="text-xl font-bold text-primary truncate">Serendip</h1>
+              )}
+              <button
+                onClick={toggleSidebar}
+                className="p-1.5 rounded-lg hover:bg-sidebar-hover transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+                title={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
+              >
+                {sidebarCollapsed ? (
+                  <ChevronRight className="w-4 h-4" />
+                ) : (
+                  <ChevronLeft className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+            <nav className="flex-1 pt-2 pb-4 overflow-y-auto overflow-x-hidden">
               <NavItem
                 icon={Compass}
                 label="探索"
@@ -670,30 +667,6 @@ function App(): React.JSX.Element {
   )
 }
 
-function SegmentButton({
-  label,
-  active,
-  onClick
-}: {
-  label: string
-  active: boolean
-  onClick: () => void
-}): React.JSX.Element {
-  return (
-    <button
-      onClick={onClick}
-      className={clsx(
-        'px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
-        active
-          ? 'bg-primary text-white'
-          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-      )}
-    >
-      {label}
-    </button>
-  )
-}
-
 /**
  * 顶栏右上角的设置面板：把缩略图大小（小/中/大）+ 探索程度三段切换收纳到一个下拉。
  *
@@ -706,19 +679,29 @@ function SettingsPopover({
   showGridSize,
   exploreMode,
   setExploreMode,
-  gridSize
+  gridSize,
+  theme
 }: {
   showExploreMode: boolean
   showGridSize: boolean
   exploreMode: 'prefer' | 'balanced' | 'explore'
   setExploreMode: (m: 'prefer' | 'balanced' | 'explore') => void
   gridSize: GridSize
-}): React.JSX.Element | null {
-  const setGridSize = useUIStore((s) => s.setGridSize)
+  theme: 'light' | 'dark'
+}): React.JSX.Element {
+  const cycleGridSize = useUIStore((s) => s.cycleGridSize)
+  const toggleTheme = useUIStore((s) => s.toggleTheme)
   const [open, setOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
   const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null)
+
+  const EXPLORE_ORDER = ['prefer', 'balanced', 'explore'] as const
+  const EXPLORE_LABEL = { prefer: '更多喜欢', balanced: '均衡', explore: '更多探索' } as const
+  const cycleExplore = (): void => {
+    const next = EXPLORE_ORDER[(EXPLORE_ORDER.indexOf(exploreMode) + 1) % 3]
+    setExploreMode(next)
+  }
 
   // 打开时计算面板位置（锚到按钮下方，靠右对齐）
   useEffect(() => {
@@ -744,8 +727,6 @@ function SettingsPopover({
     }
   }, [open])
 
-  if (!showExploreMode && !showGridSize) return null
-
   return (
     <>
       <button
@@ -767,56 +748,41 @@ function SettingsPopover({
         createPortal(
           <div
             ref={panelRef}
-            className="fixed z-[150] min-w-[260px] rounded-xl border border-border bg-glass backdrop-blur-xl shadow-lg shadow-black/20 p-3 flex flex-col gap-3"
+            className="fixed z-[150] rounded-xl border border-border bg-glass backdrop-blur-xl shadow-lg shadow-black/20 p-4 flex flex-col gap-3"
             style={{ top: anchor.top, right: anchor.right }}
           >
             {showGridSize && (
-              <div className="flex flex-col gap-1.5">
-                <div className="text-xs font-semibold text-muted-foreground px-1">
-                  缩略图大小
-                </div>
-                <div className="flex items-center gap-1">
-                  {(['small', 'medium', 'large'] as const).map((sz) => (
-                    <button
-                      key={sz}
-                      onClick={() => setGridSize(sz)}
-                      className={clsx(
-                        'flex-1 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
-                        gridSize === sz
-                          ? 'bg-primary text-white'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-                      )}
-                    >
-                      {GRID_SIZE_LABEL[sz]}
-                    </button>
-                  ))}
-                </div>
+              <div className="flex items-center gap-4">
+                <span className="text-xs text-muted-foreground flex-1">缩略图</span>
+                <button
+                  onClick={cycleGridSize}
+                  className="w-20 py-2 rounded-lg text-xs font-medium bg-muted text-foreground hover:bg-border transition-colors text-center"
+                >
+                  {GRID_SIZE_LABEL[gridSize]}
+                </button>
               </div>
             )}
             {showExploreMode && (
-              <div className="flex flex-col gap-1.5">
-                <div className="text-xs font-semibold text-muted-foreground px-1">
-                  探索程度
-                </div>
-                <div className="flex items-center gap-1">
-                  <SegmentButton
-                    label="更多喜欢"
-                    active={exploreMode === 'prefer'}
-                    onClick={() => setExploreMode('prefer')}
-                  />
-                  <SegmentButton
-                    label="均衡"
-                    active={exploreMode === 'balanced'}
-                    onClick={() => setExploreMode('balanced')}
-                  />
-                  <SegmentButton
-                    label="更多探索"
-                    active={exploreMode === 'explore'}
-                    onClick={() => setExploreMode('explore')}
-                  />
-                </div>
+              <div className="flex items-center gap-4">
+                <span className="text-xs text-muted-foreground flex-1">探索度</span>
+                <button
+                  onClick={cycleExplore}
+                  className="w-20 py-2 rounded-lg text-xs font-medium bg-muted text-foreground hover:bg-border transition-colors text-center"
+                >
+                  {EXPLORE_LABEL[exploreMode]}
+                </button>
               </div>
             )}
+            <div className="flex items-center gap-4">
+              <span className="text-xs text-muted-foreground flex-1">外观</span>
+              <button
+                onClick={toggleTheme}
+                className="w-20 py-2 rounded-lg text-xs font-medium bg-muted text-foreground hover:bg-border transition-colors flex items-center justify-center gap-1.5"
+              >
+                {theme === 'light' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+                {theme === 'light' ? '亮色' : '暗色'}
+              </button>
+            </div>
           </div>,
           document.body
         )}
