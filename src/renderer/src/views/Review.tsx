@@ -381,7 +381,7 @@ export function ReviewView(): React.JSX.Element {
               />
             ) : (
               <img
-                src={`serendip://thumb/${currentItem.id}`}
+                src={`serendip://image/${currentItem.id}`}
                 alt=""
                 draggable={false}
                 style={{
