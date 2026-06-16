@@ -1,28 +1,14 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { MasonryPhotoAlbum } from 'react-photo-album'
-import 'react-photo-album/masonry.css'
 import { Loader2, FolderOpen, Heart, HeartOff, Trash2 } from 'lucide-react'
-import { MediaCard } from '../components/MediaCard'
+import { MasonryGrid } from '../components/MasonryGrid'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { SelectionToolbar } from '../components/SelectionToolbar'
 import { useCategoriesStore } from '../stores/categories'
 import { useLibraryStore } from '../stores/library'
-import { useUIStore } from '../stores/ui'
 import { useGridSelection } from '../stores/selection'
 import { useDetailStore } from '../stores/detail'
-import { getColumns } from '../lib/grid'
-import { useSidebarFreeze } from '../lib/useSidebarFreeze'
-import { photoCellStyle } from '../lib/photoCell'
 import type { MediaItem } from '../../../main/recommender'
-
-interface MediaPhoto {
-  key: string
-  src: string
-  width: number
-  height: number
-  item: MediaItem
-}
 
 interface MenuState {
   x: number
@@ -49,7 +35,6 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const view = useLibraryStore((s) => s.view)
   const categoryRefreshNonce = useLibraryStore((s) => s.categoryRefreshNonce)
-  const gridSize = useUIStore((s) => s.gridSize)
   const openDetail = useDetailStore((s) => s.open)
 
   const category = useMemo(
@@ -62,7 +47,6 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<MediaItem | null>(null)
   const [confirmBatchRemove, setConfirmBatchRemove] = useState(false)
-  const freezeRef = useSidebarFreeze()
 
   // 多选（阶段 5）
   const {
@@ -196,18 +180,6 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     }
   }, [getSelectedIds, deselectAll, removeItems, categoryId, load])
 
-  const photos: MediaPhoto[] = useMemo(
-    () =>
-      items.map((item) => ({
-        key: String(item.id),
-        src: `serendip://thumb/${item.id}`,
-        width: item.width || 4,
-        height: item.height || 3,
-        item
-      })),
-    [items]
-  )
-
   const menuItems: ContextMenuItem[] = menu
     ? [
         {
@@ -233,7 +205,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     : []
 
   return (
-    <div className="p-4" ref={freezeRef}>
+    <div className="p-4">
       <div className="px-2 mb-3 flex items-baseline gap-3">
         <h2 className="text-lg font-semibold">{category?.name ?? '分类'}</h2>
         <span className="text-xs text-muted-foreground">
@@ -250,25 +222,15 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
           这个分类还没有内容，把媒体拖到左侧分类上即可加入
         </div>
       ) : (
-        <MasonryPhotoAlbum
-          photos={photos}
-          columns={(containerWidth) => getColumns(containerWidth, gridSize)}
-          spacing={12}
-          render={{
-            photo: (_props, { photo, width, height }) => (
-              <div style={photoCellStyle(width, height)}>
-                <MediaCard
-                  item={(photo as MediaPhoto).item}
-                  onLikeToggle={handleLikeToggle}
-                  onContextMenu={handleContextMenu}
-                  onThumbError={handleThumbError}
-                  onSelectClick={handleSelectClick}
-                  onLongPress={handleLongPress}
-                  onOpenDetail={openDetail}
-                />
-              </div>
-            )
-          }}
+        <MasonryGrid
+          items={items}
+          resetKey={`cat:${categoryId}`}
+          onLikeToggle={handleLikeToggle}
+          onContextMenu={handleContextMenu}
+          onThumbError={handleThumbError}
+          onSelectClick={handleSelectClick}
+          onLongPress={handleLongPress}
+          onOpenDetail={openDetail}
         />
       )}
 

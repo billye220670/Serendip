@@ -15,7 +15,7 @@ import type { SelectMods } from '../stores/selection'
  * 故卡片回调走 context 传入（值用 useMemo 稳定），module 级 `MasonryCard` 消费。
  */
 
-const SPACING = 12 // 列间距 / 行间距，与原 react-photo-album 一致
+const SPACING = 12 // 列间距 / 行间距
 
 interface GridHandlers {
   onLikeToggle: (id: number, liked: boolean) => void
