@@ -12,6 +12,9 @@ const TARGET_WIDTH: Record<GridSize, number> = {
   large: 380
 }
 
+/** 各尺寸档的目标列宽（masonic 按此推列数；瀑布流虚拟化用） */
+export { TARGET_WIDTH }
+
 export function getColumns(containerWidth: number, size: GridSize): number {
   const target = TARGET_WIDTH[size]
   return Math.max(2, Math.round(containerWidth / target))
