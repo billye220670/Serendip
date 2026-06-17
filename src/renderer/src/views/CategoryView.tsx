@@ -224,7 +224,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
       ) : (
         <MasonryGrid
           items={items}
-          resetKey={`cat:${categoryId}`}
+          resetKey={`cat:${categoryId}-${items.length}`}
           onLikeToggle={handleLikeToggle}
           onContextMenu={handleContextMenu}
           onThumbError={handleThumbError}

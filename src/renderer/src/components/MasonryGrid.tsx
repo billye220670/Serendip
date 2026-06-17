@@ -62,7 +62,7 @@ function MasonryCard({ data, width }: RenderComponentProps<MediaItem>): React.JS
 // 模块级稳定引用，避免每次 render 重建影响 masonic 的无限加载缓存
 const isItemLoaded = (index: number, list: MediaItem[]): boolean => index < list.length
 const LOADER_OPTIONS = { isItemLoaded, threshold: 8 }
-const itemKey = (data: MediaItem): number => data.id
+const itemKey = (data: MediaItem, index: number): number => data?.id ?? index
 
 interface MasonryGridProps extends GridHandlers {
   items: MediaItem[]

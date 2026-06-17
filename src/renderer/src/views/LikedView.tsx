@@ -212,7 +212,7 @@ export function LikedView(): React.JSX.Element {
       ) : (
         <MasonryGrid
           items={items}
-          resetKey="liked"
+          resetKey={`liked-${items.length}`}
           onLikeToggle={handleLikeToggle}
           onContextMenu={handleContextMenu}
           onThumbError={handleThumbError}
