@@ -102,7 +102,7 @@ export function ContextMenu({
       ref={ref}
       role="menu"
       style={{ left: position.left, top: position.top }}
-      className="fixed z-[100] min-w-[180px] py-1 rounded-lg border border-border bg-background shadow-lg shadow-black/20 animate-in"
+      className="fixed z-[200] min-w-[180px] py-1 rounded-lg border border-border bg-background shadow-lg shadow-black/20 animate-in"
       onContextMenu={(e) => e.preventDefault()}
     >
       {items.map((item) => {

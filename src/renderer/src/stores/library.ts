@@ -16,6 +16,7 @@ export type View =
   | { kind: 'review' }
   | { kind: 'liked' }
   | { kind: 'category'; id: number }
+  | { kind: 'canvas'; id: number }
 
 interface LibraryState {
   rootPath: string | null

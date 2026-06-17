@@ -8,10 +8,13 @@ import {
   X,
   Square,
   CheckSquare,
-  MinusSquare
+  MinusSquare,
+  Presentation
 } from 'lucide-react'
 import { CategoryPicker } from './CategoryPicker'
+import { CanvasPicker } from './CanvasPicker'
 import type { Category } from '../../../main/categories'
+import type { Canvas } from '../../../main/canvases'
 
 interface SelectionToolbarProps {
   active: boolean
@@ -21,11 +24,15 @@ interface SelectionToolbarProps {
   onSelectAll?: () => void
   onDeselectAll?: () => void
   categories: Category[]
+  canvases?: Canvas[]
+  currentCanvasId?: number | null
   onLike?: () => void
   onUnlike?: () => void
   onDislike?: () => void
   onAddToCategory?: (categoryId: number) => void
   onCreateAndAddToCategory?: (name: string) => void
+  onAddToCanvas?: (canvasId: number) => void
+  onCreateAndAddToCanvas?: (name: string) => void
   onRemoveFromCategory?: () => void
 }
 
@@ -37,14 +44,19 @@ export function SelectionToolbar({
   onSelectAll,
   onDeselectAll,
   categories,
+  canvases = [],
+  currentCanvasId,
   onLike,
   onUnlike,
   onDislike,
   onAddToCategory,
   onCreateAndAddToCategory,
+  onAddToCanvas,
+  onCreateAndAddToCanvas,
   onRemoveFromCategory
 }: SelectionToolbarProps): React.JSX.Element | null {
   const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null)
+  const [canvasPickerAnchor, setCanvasPickerAnchor] = useState<{ x: number; y: number } | null>(null)
 
   if (!active) return null
 
@@ -60,6 +72,17 @@ export function SelectionToolbar({
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
     setPickerAnchor({ x: r.left + r.width / 2, y: r.top })
   }
+
+  const openCanvasPicker = (e: React.MouseEvent): void => {
+    if (currentCanvasId != null) {
+      onAddToCanvas?.(currentCanvasId)
+      return
+    }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setCanvasPickerAnchor({ x: r.left + r.width / 2, y: r.top })
+  }
+
+  const showAddToCanvas = !!onAddToCanvas
 
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1 rounded-full border border-border bg-glass backdrop-blur-xl px-2 py-1.5 shadow-lg shadow-black/20">
@@ -101,6 +124,14 @@ export function SelectionToolbar({
           onClick={openPicker}
         />
       )}
+      {showAddToCanvas && (
+        <ToolbarButton
+          icon={Presentation}
+          label="加入画布"
+          disabled={!hasSelection}
+          onClick={openCanvasPicker}
+        />
+      )}
       {onRemoveFromCategory && (
         <ToolbarButton
           icon={Trash2}
@@ -130,6 +161,17 @@ export function SelectionToolbar({
           onSelect={(id) => { onAddToCategory?.(id) }}
           onCreateAndSelect={(name) => { onCreateAndAddToCategory?.(name) }}
           onClose={() => setPickerAnchor(null)}
+        />
+      )}
+      {canvasPickerAnchor && (
+        <CanvasPicker
+          x={canvasPickerAnchor.x}
+          y={canvasPickerAnchor.y}
+          placement="top"
+          canvases={canvases}
+          onSelect={(id) => { onAddToCanvas?.(id); setCanvasPickerAnchor(null) }}
+          onCreateAndSelect={(name) => { onCreateAndAddToCanvas?.(name); setCanvasPickerAnchor(null) }}
+          onClose={() => setCanvasPickerAnchor(null)}
         />
       )}
     </div>

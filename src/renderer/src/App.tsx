@@ -20,13 +20,19 @@ import { useUIStore } from './stores/ui'
 import { useDetailStore } from './stores/detail'
 import { useLibraryStore } from './stores/library'
 import { useCategoriesStore } from './stores/categories'
+import { useCanvasesStore } from './stores/canvases'
+import { useCurrentCanvasStore } from './stores/currentCanvas'
 import { useSelectionStore } from './stores/selection'
 import { ExploreView } from './views/Explore'
 import { CategoryView } from './views/CategoryView'
 import { ReviewView } from './views/Review'
 import { LikedView } from './views/LikedView'
+import { CanvasView } from './views/CanvasView'
 import { DetailView } from './views/Detail'
 import { CategoryList } from './components/CategoryList'
+import { CurrentCanvasChip } from './components/CurrentCanvasChip'
+import { ToastContainer, pushCanvasToast } from './components/Toast'
+import { Tooltip } from './components/Tooltip'
 import { PromptDialog } from './components/PromptDialog'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import { ContextMenu } from './components/ContextMenu'
@@ -36,7 +42,7 @@ import {
   Sun,
   Moon,
   Compass,
-  Star,
+  Glasses,
   Heart,
   Loader2,
   RefreshCw,
@@ -47,16 +53,20 @@ import {
   ChevronLeft,
   ChevronRight,
   SlidersHorizontal,
-  Pencil
+  Pencil,
+  Trash2,
+  Presentation,
+  Search
 } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../main/categories'
+import type { Canvas } from '../../main/canvases'
 import type { MediaItem } from '../../main/recommender'
 import type { GridSize } from './stores/ui'
 import { IPC } from '../../main/ipc/contract'
 import { ScrollContainerContext } from './lib/scrollContainer'
 
-type DragType = 'category' | 'media' | null
+type DragType = 'category' | 'media' | 'canvas' | null
 
 /**
  * 自绘标题栏拖拽样式辅助 —— -webkit-app-region 不在标准 CSSProperties 类型里，
@@ -73,6 +83,7 @@ const NOT_DRAGGABLE: React.CSSProperties = {
 type ActiveDrag =
   | { type: 'media'; item: MediaItem; count: number }
   | { type: 'category'; name: string }
+  | { type: 'canvas'; name: string }
   | null
 
 /**
@@ -141,17 +152,30 @@ function App(): React.JSX.Element {
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const removeItemsFromCategory = useCategoriesStore((s) => s.removeItems)
 
+  const canvases = useCanvasesStore((s) => s.canvases)
+  const loadCanvases = useCanvasesStore((s) => s.load)
+  const createCanvas = useCanvasesStore((s) => s.create)
+  const renameCanvas = useCanvasesStore((s) => s.rename)
+  const removeCanvas = useCanvasesStore((s) => s.remove)
+  const reorderCanvases = useCanvasesStore((s) => s.reorder)
+  const addItemsToCanvas = useCanvasesStore((s) => s.addItems)
+
+  const currentCanvasId = useCurrentCanvasStore((s) => s.currentCanvasId)
+  const setCurrentCanvas = useCurrentCanvasStore((s) => s.setCurrent)
+
   // 弹窗状态
   const [showCreate, setShowCreate] = useState(false)
   const [renameTarget, setRenameTarget] = useState<Category | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Category | null>(null)
 
+  // 画布弹窗状态（重命名/删除，从 CanvasPopover 触发）
+  const [renameCanvasTarget, setRenameCanvasTarget] = useState<Canvas | null>(null)
+  const [deleteCanvasTarget, setDeleteCanvasTarget] = useState<Canvas | null>(null)
+
   // 拖拽状态
   const [dragType, setDragType] = useState<DragType>(null)
   const [activeDrag, setActiveDrag] = useState<ActiveDrag>(null)
-  const [hoveredDropCategoryId, setHoveredDropCategoryId] = useState<number | null>(
-    null
-  )
+  const [hoveredDropCategoryId, setHoveredDropCategoryId] = useState<number | null>(null)
   // 从分类拖到另一分类时的"移动/复制"投放菜单
   const [dropMenu, setDropMenu] = useState<{
     x: number
@@ -193,7 +217,8 @@ function App(): React.JSX.Element {
   useEffect(() => {
     loadCurrentRoot()
     void loadCategories()
-  }, [loadCurrentRoot, loadCategories])
+    void loadCanvases()
+  }, [loadCurrentRoot, loadCategories, loadCanvases])
 
   const handleSelectRoot = async (): Promise<void> => {
     const path = await window.api.selectRootDirectory()
@@ -210,7 +235,6 @@ function App(): React.JSX.Element {
     const data = e.active.data.current
     const t = data?.type
     if (t === 'media') {
-      // 若拖的是已选中的项且选中多于 1，则整组一起拖
       const fileId = data?.fileId as number
       const sel = useSelectionStore.getState().selected
       const count = sel.has(fileId) && sel.size > 1 ? sel.size : 1
@@ -219,6 +243,9 @@ function App(): React.JSX.Element {
     } else if (t === 'category') {
       setDragType('category')
       setActiveDrag({ type: 'category', name: data?.name as string })
+    } else if (t === 'canvas') {
+      setDragType('canvas')
+      setActiveDrag({ type: 'canvas', name: data?.name as string })
     }
   }, [])
 
@@ -262,7 +289,22 @@ function App(): React.JSX.Element {
         return
       }
 
-      // 2) 媒体投放到分类
+      // 2) 画布重排
+      if (activeType === 'canvas' && overData?.type === 'canvas') {
+        const oldIndex = canvases.findIndex(
+          (c) => c.id === e.active.data.current?.canvasId
+        )
+        const newIndex = canvases.findIndex(
+          (c) => c.id === overData.canvasId
+        )
+        if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+          const reordered = arrayMove(canvases, oldIndex, newIndex)
+          await reorderCanvases(reordered.map((c) => c.id))
+        }
+        return
+      }
+
+      // 3) 媒体投放到分类
       if (activeType === 'media' && overData?.type === 'category') {
         const fileId = e.active.data.current?.fileId as number
         const targetCategoryId = overData.categoryId as number
@@ -270,7 +312,6 @@ function App(): React.JSX.Element {
         const ids = sel.has(fileId) && sel.size > 1 ? [...sel] : [fileId]
         const sourceCategoryId = view.kind === 'category' ? view.id : null
 
-        // 从某分类拖到「另一个」分类：弹"移动 / 复制"菜单，锚定在目标 tab 右侧
         if (sourceCategoryId !== null && sourceCategoryId !== targetCategoryId) {
           const rect = e.over.rect
           setDropMenu({
@@ -283,16 +324,43 @@ function App(): React.JSX.Element {
           return
         }
 
-        // 其余情况（探索来源、或拖回当前分类自身）：直接加入
         try {
           await addItemsToCategory(targetCategoryId, ids)
           if (ids.length > 1) useSelectionStore.getState().deselectAll()
         } catch (err) {
           console.error('addItemsToCategory failed:', err)
         }
+        return
+      }
+
+      // 4) 媒体投放到画布 pill
+      if (activeType === 'media' && overData?.type === 'canvas') {
+        const fileId = e.active.data.current?.fileId as number
+        const targetCanvasId = overData.canvasId as number
+        const sel = useSelectionStore.getState().selected
+        const fileIds = sel.has(fileId) && sel.size > 1 ? [...sel] : [fileId]
+        const targetCanvas = canvases.find((c) => c.id === targetCanvasId)
+        if (!targetCanvas) return
+
+        // 简单瀑布式初始布局（阶段 1）
+        const items = fileIds.map((fid, i) => ({
+          fileId: fid,
+          x: 0,
+          y: i * 252,
+          w: 240,
+          h: 180,
+          z: 0
+        }))
+        try {
+          await addItemsToCanvas(targetCanvasId, items)
+          pushCanvasToast(targetCanvasId, targetCanvas.name, fileIds.length)
+          if (fileIds.length > 1) useSelectionStore.getState().deselectAll()
+        } catch (err) {
+          console.error('addItemsToCanvas failed:', err)
+        }
       }
     },
-    [categories, reorderCategories, addItemsToCategory, view]
+    [categories, canvases, reorderCategories, reorderCanvases, addItemsToCategory, addItemsToCanvas, view]
   )
 
   // 投放菜单：移动到此 = 加到目标 + 从来源移除；复制到此 = 仅加到目标
@@ -352,12 +420,39 @@ function App(): React.JSX.Element {
     setDeleteTarget(null)
     try {
       await removeCategory(id)
-      // 当前正在看这个分类则跳回探索
       if (view.kind === 'category' && view.id === id) {
         setView({ kind: 'explore' })
       }
     } catch (err) {
       console.error('deleteCategory failed:', err)
+    }
+  }
+
+  // ===== 画布 CRUD =====
+  const handleRenameCanvas = async (name: string): Promise<void | string> => {
+    if (!renameCanvasTarget) return
+    try {
+      await renameCanvas(renameCanvasTarget.id, name)
+      setRenameCanvasTarget(null)
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  const handleConfirmDeleteCanvas = async (): Promise<void> => {
+    if (!deleteCanvasTarget) return
+    const id = deleteCanvasTarget.id
+    setDeleteCanvasTarget(null)
+    try {
+      await removeCanvas(id)
+      if (view.kind === 'canvas' && view.id === id) {
+        setView({ kind: 'explore' })
+      }
+      if (currentCanvasId === id) {
+        setCurrentCanvas(null)
+      }
+    } catch (err) {
+      console.error('deleteCanvas failed:', err)
     }
   }
 
@@ -432,15 +527,16 @@ function App(): React.JSX.Element {
             ) : (
               /* 其他视图：选择根目录、路径、重新扫描 */
               <>
-                <button
-                  onClick={handleSelectRoot}
-                  disabled={isScanning}
-                  className="p-2 hover:opacity-60 transition-opacity disabled:opacity-30 flex-shrink-0"
-                  title={rootPath ? '更换根目录' : '选择根目录'}
-                  style={NOT_DRAGGABLE}
-                >
-                  <FolderOpen className="w-5 h-5" />
-                </button>
+                <Tooltip text={rootPath ? '更换根目录' : '选择根目录'} side="bottom">
+                  <button
+                    onClick={handleSelectRoot}
+                    disabled={isScanning}
+                    className="p-2 hover:opacity-60 transition-opacity disabled:opacity-30 flex-shrink-0"
+                    style={NOT_DRAGGABLE}
+                  >
+                    <FolderOpen className="w-5 h-5" />
+                  </button>
+                </Tooltip>
                 {rootPath && (
                   <>
                     <div
@@ -449,17 +545,18 @@ function App(): React.JSX.Element {
                     >
                       {rootPath}
                     </div>
-                    <button
-                      onClick={handleRescan}
-                      disabled={isScanning}
-                      className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
-                      title="重新扫描"
-                      style={NOT_DRAGGABLE}
-                    >
-                      <RefreshCw
-                        className={clsx('w-4 h-4', isScanning && 'animate-spin')}
-                      />
-                    </button>
+                    <Tooltip text="重新扫描" side="bottom">
+                      <button
+                        onClick={handleRescan}
+                        disabled={isScanning}
+                        className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
+                        style={NOT_DRAGGABLE}
+                      >
+                        <RefreshCw
+                          className={clsx('w-4 h-4', isScanning && 'animate-spin')}
+                        />
+                      </button>
+                    </Tooltip>
                   </>
                 )}
                 {/* 评审进度 */}
@@ -475,11 +572,12 @@ function App(): React.JSX.Element {
             )}
           </div>
 
-          {/* 右：设置面板按钮 + 系统按钮预留区 */}
+          {/* 右：当前画布 chip + 设置面板按钮 + 系统按钮预留区 */}
           <div
             className="flex items-center gap-1 pr-2 flex-shrink-0"
             style={NOT_DRAGGABLE}
           >
+            <CurrentCanvasChip />
             <SettingsPopover
               showExploreMode={view.kind === 'explore'}
               showGridSize={view.kind !== 'review' && !!rootPath && !isScanning}
@@ -508,7 +606,7 @@ function App(): React.JSX.Element {
             className="flex-shrink-0 flex flex-col bg-sidebar h-full overflow-hidden transition-[width] duration-[250ms] ease-in-out"
             style={{ width: sidebarCollapsed ? 70 : 240 }}
           >
-            {/* 侧栏顶部：品牌 + 折叠按钮，高度与顶栏齐 */}
+            {/* 侧栏顶部：品牌 + 折叠按钮 */}
             <div
               className={clsx(
                 'h-16 flex-shrink-0 flex items-center',
@@ -518,19 +616,22 @@ function App(): React.JSX.Element {
               {!sidebarCollapsed && (
                 <h1 className="text-xl font-bold text-primary truncate">Serendip</h1>
               )}
-              <button
-                onClick={toggleSidebar}
-                className="p-1.5 rounded-lg hover:bg-sidebar-hover transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
-                title={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'}
-              >
-                {sidebarCollapsed ? (
-                  <ChevronRight className="w-4 h-4" />
-                ) : (
-                  <ChevronLeft className="w-4 h-4" />
-                )}
-              </button>
+              <Tooltip text={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'} side="right">
+                <button
+                  onClick={toggleSidebar}
+                  className="p-1.5 rounded-lg hover:bg-sidebar-hover transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+                >
+                  {sidebarCollapsed ? (
+                    <ChevronRight className="w-4 h-4" />
+                  ) : (
+                    <ChevronLeft className="w-4 h-4" />
+                  )}
+                </button>
+              </Tooltip>
             </div>
-            <nav className="flex-1 pt-2 pb-4 overflow-y-auto overflow-x-hidden">
+
+            {/* 固定顶部：探索 / 评审 / 喜欢 */}
+            <div className="flex-shrink-0 pt-2">
               <NavItem
                 icon={Compass}
                 label="探索"
@@ -539,7 +640,7 @@ function App(): React.JSX.Element {
                 onClick={() => setView({ kind: 'explore' })}
               />
               <NavItem
-                icon={Star}
+                icon={Glasses}
                 label="评审"
                 active={view.kind === 'review'}
                 collapsed={sidebarCollapsed}
@@ -553,41 +654,70 @@ function App(): React.JSX.Element {
                 badge={!sidebarCollapsed && stats?.liked ? stats.liked : undefined}
                 onClick={() => setView({ kind: 'liked' })}
               />
+            </div>
 
-              <div className="mt-6">
-                {!sidebarCollapsed && (
-                  <div className="px-5 flex items-center justify-between py-2 text-xs font-semibold text-muted-foreground">
-                    <span>收藏分类</span>
-                    <button
-                      className="hover:text-foreground transition-colors p-0.5 rounded hover:bg-sidebar-hover"
-                      title="新建分类"
-                      onClick={() => setShowCreate(true)}
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
+            {/* 中间可滚分组区（不整体滚，各组内部滚） */}
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden pt-2">
+              {/* 收藏分类组 */}
+              <div className="flex flex-col min-h-0 flex-1">
+                {!sidebarCollapsed ? (
+                  <div className="flex items-center justify-between px-5 py-2">
+                    <span className="text-xs font-semibold text-muted-foreground">收藏分类</span>
+                    <Tooltip text="新建分类" side="right">
+                      <button
+                        className="p-0.5 hover:text-foreground text-muted-foreground hover:bg-sidebar-hover rounded transition-colors"
+                        onClick={() => setShowCreate(true)}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </button>
+                    </Tooltip>
                   </div>
-                )}
-                {sidebarCollapsed && (
+                ) : (
                   <div className="flex justify-center py-1.5">
-                    <button
-                      className="p-1 hover:text-foreground text-muted-foreground hover:bg-sidebar-hover rounded transition-colors"
-                      title="新建分类"
-                      onClick={() => setShowCreate(true)}
-                    >
-                      <Plus className="w-4 h-4" />
-                    </button>
+                    <Tooltip text="新建分类" side="right">
+                      <button
+                        className="p-1 hover:text-foreground text-muted-foreground hover:bg-sidebar-hover rounded transition-colors"
+                        onClick={() => setShowCreate(true)}
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                    </Tooltip>
                   </div>
                 )}
-
-                <CategoryList
-                  activeDragType={dragType}
-                  hoveredDropCategoryId={hoveredDropCategoryId}
-                  collapsed={sidebarCollapsed}
-                  onRename={(c) => setRenameTarget(c)}
-                  onDelete={(c) => setDeleteTarget(c)}
-                />
+                <div className="overflow-y-auto flex-1 min-h-0">
+                  <CategoryList
+                    activeDragType={dragType}
+                    hoveredDropCategoryId={hoveredDropCategoryId}
+                    collapsed={sidebarCollapsed}
+                    onRename={(c) => setRenameTarget(c)}
+                    onDelete={(c) => setDeleteTarget(c)}
+                  />
+                </div>
               </div>
-            </nav>
+            </div>
+
+            {/* 固定底部：画布按钮 */}
+            <div className="flex-shrink-0">
+              <CanvasPopover
+                canvases={canvases}
+                currentCanvasId={currentCanvasId}
+                collapsed={sidebarCollapsed}
+                onCreate={async (name) => {
+                  try {
+                    const id = await createCanvas(name)
+                    setCurrentCanvas(id)
+                    return
+                  } catch (err) {
+                    return err instanceof Error ? err.message : String(err)
+                  }
+                }}
+                onSelect={(id) => {
+                  setCurrentCanvas(id)
+                }}
+                onRename={(c) => setRenameCanvasTarget(c)}
+                onDelete={(c) => setDeleteCanvasTarget(c)}
+              />
+            </div>
           </aside>
 
           {/* 右侧主区域：不再自己滚动，改为容纳多个独立滚动的视图层。
@@ -612,7 +742,7 @@ function App(): React.JSX.Element {
             {/* 其他视图：条件渲染，各自独立滚动 */}
             {(view.kind !== 'explore' || !rootPath || isScanning) && (
               <OtherViewScrollContainer>
-                <div className={view.kind === 'review' ? 'h-full' : 'min-h-full'}>
+                <div className={view.kind === 'review' ? 'h-full' : view.kind === 'canvas' ? 'h-full' : 'min-h-full'}>
                   {isScanning ? (
                     <ScanProgressPanel progress={scanProgress} />
                   ) : !rootPath ? (
@@ -623,6 +753,8 @@ function App(): React.JSX.Element {
                     <LikedView />
                   ) : view.kind === 'category' ? (
                     <CategoryView key={view.id} categoryId={view.id} />
+                  ) : view.kind === 'canvas' ? (
+                    <CanvasView key={view.id} canvasId={view.id} />
                   ) : null}
                 </div>
               </OtherViewScrollContainer>
@@ -675,11 +807,48 @@ function App(): React.JSX.Element {
         />
       )}
 
+      {/* 重命名画布 */}
+      {renameCanvasTarget && (
+        <PromptDialog
+          title="重命名画布"
+          initialValue={renameCanvasTarget.name}
+          confirmLabel="保存"
+          onConfirm={handleRenameCanvas}
+          onCancel={() => setRenameCanvasTarget(null)}
+        />
+      )}
+
+      {/* 删除画布二次确认 */}
+      {deleteCanvasTarget && (
+        <ConfirmDialog
+          title="删除画布"
+          message={
+            <>
+              确定要删除画布「<strong>{deleteCanvasTarget.name}</strong>」吗？
+              <br />
+              <span className="text-xs text-muted-foreground">
+                包含的 {deleteCanvasTarget.itemCount} 项关联会一并清除，
+                但原始文件不会被删除。
+              </span>
+            </>
+          }
+          confirmLabel="删除"
+          danger
+          onConfirm={handleConfirmDeleteCanvas}
+          onCancel={() => setDeleteCanvasTarget(null)}
+        />
+      )}
+
+      {/* Toast 提示 */}
+      <ToastContainer onNavigate={(canvasId) => setView({ kind: 'canvas', id: canvasId })} />
+
       {/* 拖拽浮层 — 中心吸附到鼠标，跟随光标 */}
       <DragOverlay dropAnimation={null} modifiers={[snapToCursor]}>
         {activeDrag?.type === 'media' ? (
           <MediaDragPreview item={activeDrag.item} count={activeDrag.count} />
         ) : activeDrag?.type === 'category' ? (
+          <CategoryDragPreview name={activeDrag.name} />
+        ) : activeDrag?.type === 'canvas' ? (
           <CategoryDragPreview name={activeDrag.name} />
         ) : null}
       </DragOverlay>
@@ -777,26 +946,27 @@ function SettingsPopover({
 
   return (
     <>
-      <button
-        ref={btnRef}
-        onClick={() => setOpen((v) => !v)}
-        className={clsx(
-          'p-2 rounded-lg transition-colors',
-          open
-            ? 'bg-muted text-foreground'
-            : 'hover:bg-muted text-muted-foreground hover:text-foreground'
-        )}
-        title="显示设置"
-        aria-expanded={open}
-      >
-        <SlidersHorizontal className="w-4 h-4" />
-      </button>
+      <Tooltip text="显示设置" side="bottom">
+        <button
+          ref={btnRef}
+          onClick={() => setOpen((v) => !v)}
+          className={clsx(
+            'p-2 rounded-lg transition-colors',
+            open
+              ? 'bg-muted text-foreground'
+              : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+          )}
+          aria-expanded={open}
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+        </button>
+      </Tooltip>
       {open &&
         anchor &&
         createPortal(
           <div
             ref={panelRef}
-            className="fixed z-[150] rounded-xl border border-border bg-glass backdrop-blur-xl shadow-lg shadow-black/20 p-4 flex flex-col gap-3"
+            className="fixed z-[150] rounded-xl border border-border bg-sidebar shadow-lg shadow-black/20 p-4 flex flex-col gap-3"
             style={{ top: anchor.top, right: anchor.right }}
           >
           {showGridSize && (
@@ -835,6 +1005,246 @@ function SettingsPopover({
           document.body
         )}
     </>
+  )
+}
+
+/**
+ * 侧栏底部画布按钮 + hover 浮出面板
+ *
+ * 点击：快速新建画布并设为当前，不打开视图
+ * hover 500ms：打开浮出面板（搜索 + 画布列表），选中时设为当前并打开视图
+ */
+function CanvasPopover({
+  canvases,
+  currentCanvasId,
+  collapsed,
+  onCreate,
+  onSelect,
+  onRename,
+  onDelete
+}: {
+  canvases: Canvas[]
+  currentCanvasId: number | null
+  collapsed?: boolean
+  onCreate: (name: string) => Promise<void | string>
+  onSelect: (id: number) => void
+  onRename: (canvas: Canvas) => void
+  onDelete: (canvas: Canvas) => void
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+  const [error, setError] = useState('')
+  const [menu, setMenu] = useState<{ x: number; y: number; canvas: Canvas } | null>(null)
+  const [showTooltip, setShowTooltip] = useState(false)
+  const [tooltipY, setTooltipY] = useState(0)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [anchor, setAnchor] = useState<{ bottom: number; left: number } | null>(null)
+
+  // 点击按钮：打开/关闭面板
+  const handleClick = (): void => {
+    if (open) {
+      setOpen(false)
+      return
+    }
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) {
+      // 面板从按钮底部向上展开，left = 按钮右边缘 + 8px
+      setAnchor({ bottom: window.innerHeight - r.bottom + 20, left: r.right + 8 })
+    }
+    setOpen(true)
+  }
+
+  // 打开面板时聚焦搜索框并注册点外关闭
+  useEffect(() => {
+    if (!open) {
+      setSearch('')
+      setError('')
+      return
+    }
+    setTimeout(() => searchRef.current?.focus(), 0)
+
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (panelRef.current?.contains(t)) return
+      if (btnRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // 回车：新建画布（或有唯一匹配时选中）
+  const handleKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>): Promise<void> => {
+    if (e.key !== 'Enter') return
+    const name = search.trim()
+    if (!name) return
+    if (showCreate) {
+      const err = await onCreate(name)
+      if (err) { setError(err) } else { setSearch(''); setError(''); setOpen(false) }
+    } else if (filtered.length === 1) {
+      setOpen(false)
+      onSelect(filtered[0].id)
+    } else {
+      const err = await onCreate(name)
+      if (err) { setError(err) } else { setSearch(''); setError(''); setOpen(false) }
+    }
+  }
+
+  // 折叠态 tooltip
+  const handleMouseEnter = (): void => {
+    if (!collapsed) return
+    const rect = btnRef.current?.getBoundingClientRect()
+    if (rect) setTooltipY(rect.top)
+    setShowTooltip(true)
+  }
+
+  const filtered = search.trim()
+    ? canvases.filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
+    : canvases
+  const showCreate = search.trim().length > 0 && filtered.length === 0
+
+  const menuItems = menu
+    ? [
+        {
+          key: 'rename',
+          label: '重命名',
+          icon: Pencil,
+          onClick: () => { setMenu(null); onRename(menu.canvas) }
+        },
+        {
+          key: 'delete',
+          label: '删除画布',
+          icon: Trash2,
+          danger: true,
+          onClick: () => { setMenu(null); onDelete(menu.canvas) }
+        }
+      ]
+    : []
+
+  return (
+    <div className="relative">
+      <button
+        ref={btnRef}
+        onClick={handleClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={() => setShowTooltip(false)}
+        className={clsx(
+          'w-full flex items-center gap-3 py-5 text-sm font-medium transition-colors',
+          collapsed ? 'justify-center px-0' : 'px-5',
+          open ? 'text-primary' : 'text-foreground hover:bg-sidebar-hover'
+        )}
+      >
+        <Presentation className="w-5 h-5 flex-shrink-0" />
+        {!collapsed && (
+          <>
+            <span className="truncate flex-1 text-left">画布</span>
+            <ChevronRight className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+          </>
+        )}
+      </button>
+
+      {/* 折叠态 tooltip */}
+      {collapsed && showTooltip && createPortal(
+        <div className="fixed z-[200] pointer-events-none" style={{ left: 78, top: tooltipY }}>
+          <div className="bg-sidebar border border-border text-foreground text-xs px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
+            画布
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* 浮出面板：从按钮位置向上展开 */}
+      {open && anchor && createPortal(
+        <div
+          ref={panelRef}
+          className="fixed z-[150] w-64 rounded-xl border border-border bg-sidebar shadow-lg shadow-black/20 flex flex-col"
+          style={{ bottom: anchor.bottom, left: anchor.left }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation() }}
+          onWheel={(e) => e.stopPropagation()}
+        >
+          {/* 搜索框 */}
+          <div className="p-3 border-b border-border">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <input
+                ref={searchRef}
+                type="text"
+                value={search}
+                onChange={(e) => { setSearch(e.target.value); setError('') }}
+                onKeyDown={(e) => void handleKeyDown(e)}
+                placeholder="搜索或回车新建…"
+                className="w-full pl-9 pr-3 py-2 text-sm bg-muted border border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground placeholder:text-muted-foreground"
+              />
+            </div>
+            {error && (
+              <div className="mt-2 text-xs text-red-500">{error}</div>
+            )}
+          </div>
+
+          {/* 画布列表 */}
+          <div className="overflow-y-auto" style={{ maxHeight: '40vh' }}>
+            {showCreate ? (
+              <div className="py-1">
+                <button
+                  onClick={() => { void (async () => { const err = await onCreate(search.trim()); if (!err) { setSearch(''); setError(''); setOpen(false) } else setError(err) })() }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-left text-primary hover:bg-sidebar-hover mx-0 transition-colors"
+                >
+                  <Plus className="w-4 h-4 flex-shrink-0" />
+                  <span className="flex-1 truncate">创建「{search.trim()}」</span>
+                </button>
+              </div>
+            ) : filtered.length === 0 ? (
+              <div className="py-6 text-center text-xs text-muted-foreground">
+                还没有画布，回车新建
+              </div>
+            ) : (
+              <div className="py-1">
+                {filtered.map((canvas) => (
+                  <div
+                    key={canvas.id}
+                    className={clsx(
+                      'flex items-center gap-2.5 px-3 py-2 text-sm cursor-pointer transition-colors mx-1 rounded',
+                      canvas.id === currentCanvasId ? 'text-primary' : 'text-foreground hover:bg-sidebar-hover'
+                    )}
+                    onClick={() => { setOpen(false); onSelect(canvas.id) }}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      setMenu({ x: e.clientX, y: e.clientY, canvas })
+                    }}
+                  >
+                    <Presentation className={clsx('w-4 h-4 flex-shrink-0', canvas.id === currentCanvasId ? 'text-primary' : 'text-muted-foreground')} />
+                    <span className="flex-1 truncate">{canvas.name}</span>
+                    <span className="text-xs text-muted-foreground tabular-nums">{canvas.itemCount}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
+        />
+      )}
+    </div>
   )
 }
 
@@ -999,7 +1409,7 @@ function NavItem({
           className="fixed z-[200] pointer-events-none"
           style={{ left: 78, top: tooltipY }}
         >
-          <div className="bg-glass backdrop-blur-xl border border-border text-foreground text-xs px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
+          <div className="bg-sidebar border border-border text-foreground text-xs px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
             {label}
           </div>
         </div>,

@@ -5,6 +5,9 @@
 import type { ScanProgress } from '../scanner'
 import type { MediaItem, ExploreMode } from '../recommender'
 import type { Category } from '../categories'
+import type { Canvas, CanvasItem, CanvasItemInput, CanvasItemPatch } from '../canvases'
+
+export type { Canvas, CanvasItem, CanvasItemInput, CanvasItemPatch }
 
 // 主进程暴露给渲染进程的 API
 export interface SerendipAPI {
@@ -45,6 +48,20 @@ export interface SerendipAPI {
   removeItemsFromCategory(categoryId: number, fileIds: number[]): Promise<void>
   /** 返回文件所属的分类 id 列表（评审视图胶囊高亮用） */
   getFileCategoryIds(fileId: number): Promise<number[]>
+
+  // ===== 画布 =====
+  listCanvases(): Promise<Canvas[]>
+  createCanvas(name: string): Promise<number>
+  renameCanvas(id: number, newName: string): Promise<void>
+  deleteCanvas(id: number): Promise<void>
+  reorderCanvases(orderedIds: number[]): Promise<void>
+  getCanvasItems(canvasId: number): Promise<CanvasItem[]>
+  addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): Promise<number[]>
+  removeItemsFromCanvas(canvasId: number, itemIds: number[]): Promise<void>
+  updateCanvasItem(itemId: number, patch: Omit<CanvasItemPatch, 'id'>): Promise<void>
+  updateCanvasItems(patches: CanvasItemPatch[]): Promise<void>
+  updateCanvasViewport(canvasId: number, x: number, y: number, scale: number): Promise<void>
+  getFileCanvasIds(fileId: number): Promise<number[]>
 
   // ===== 进度订阅 =====
   onScanProgress(callback: (progress: ScanProgress) => void): () => void
@@ -89,6 +106,18 @@ export const IPC = {
   REMOVE_ITEM_FROM_CATEGORY: 'serendip:removeItemFromCategory',
   REMOVE_ITEMS_FROM_CATEGORY: 'serendip:removeItemsFromCategory',
   GET_FILE_CATEGORY_IDS: 'serendip:getFileCategoryIds',
+  LIST_CANVASES: 'serendip:listCanvases',
+  CREATE_CANVAS: 'serendip:createCanvas',
+  RENAME_CANVAS: 'serendip:renameCanvas',
+  DELETE_CANVAS: 'serendip:deleteCanvas',
+  REORDER_CANVASES: 'serendip:reorderCanvases',
+  GET_CANVAS_ITEMS: 'serendip:getCanvasItems',
+  ADD_ITEMS_TO_CANVAS: 'serendip:addItemsToCanvas',
+  REMOVE_ITEMS_FROM_CANVAS: 'serendip:removeItemsFromCanvas',
+  UPDATE_CANVAS_ITEM: 'serendip:updateCanvasItem',
+  UPDATE_CANVAS_ITEMS: 'serendip:updateCanvasItems',
+  UPDATE_CANVAS_VIEWPORT: 'serendip:updateCanvasViewport',
+  GET_FILE_CANVAS_IDS: 'serendip:getFileCanvasIds',
   SET_TITLE_BAR_OVERLAY: 'serendip:setTitleBarOverlay',
   FULLSCREEN_CHANGE: 'serendip:fullscreenChange',
   WINDOW_MOVE: 'serendip:windowMove'

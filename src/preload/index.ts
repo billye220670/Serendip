@@ -4,6 +4,7 @@ import type { SerendipAPI } from '../main/ipc/contract'
 import { IPC } from '../main/ipc/contract'
 import type { ScanProgress } from '../main/scanner'
 import type { ExploreMode } from '../main/recommender'
+import type { CanvasItemInput, CanvasItemPatch } from '../main/canvases'
 
 const api: SerendipAPI = {
   selectRootDirectory: () => ipcRenderer.invoke(IPC.SELECT_ROOT),
@@ -47,6 +48,28 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.REMOVE_ITEMS_FROM_CATEGORY, categoryId, fileIds),
   getFileCategoryIds: (fileId: number) =>
     ipcRenderer.invoke(IPC.GET_FILE_CATEGORY_IDS, fileId),
+
+  listCanvases: () => ipcRenderer.invoke(IPC.LIST_CANVASES),
+  createCanvas: (name: string) => ipcRenderer.invoke(IPC.CREATE_CANVAS, name),
+  renameCanvas: (id: number, newName: string) =>
+    ipcRenderer.invoke(IPC.RENAME_CANVAS, id, newName),
+  deleteCanvas: (id: number) => ipcRenderer.invoke(IPC.DELETE_CANVAS, id),
+  reorderCanvases: (orderedIds: number[]) =>
+    ipcRenderer.invoke(IPC.REORDER_CANVASES, orderedIds),
+  getCanvasItems: (canvasId: number) =>
+    ipcRenderer.invoke(IPC.GET_CANVAS_ITEMS, canvasId),
+  addItemsToCanvas: (canvasId: number, items: CanvasItemInput[]) =>
+    ipcRenderer.invoke(IPC.ADD_ITEMS_TO_CANVAS, canvasId, items),
+  removeItemsFromCanvas: (canvasId: number, itemIds: number[]) =>
+    ipcRenderer.invoke(IPC.REMOVE_ITEMS_FROM_CANVAS, canvasId, itemIds),
+  updateCanvasItem: (itemId: number, patch: Omit<CanvasItemPatch, 'id'>) =>
+    ipcRenderer.invoke(IPC.UPDATE_CANVAS_ITEM, itemId, patch),
+  updateCanvasItems: (patches: CanvasItemPatch[]) =>
+    ipcRenderer.invoke(IPC.UPDATE_CANVAS_ITEMS, patches),
+  updateCanvasViewport: (canvasId: number, x: number, y: number, scale: number) =>
+    ipcRenderer.invoke(IPC.UPDATE_CANVAS_VIEWPORT, canvasId, x, y, scale),
+  getFileCanvasIds: (fileId: number) =>
+    ipcRenderer.invoke(IPC.GET_FILE_CANVAS_IDS, fileId),
 
   onScanProgress: (callback: (progress: ScanProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => {

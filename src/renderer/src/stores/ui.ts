@@ -13,6 +13,10 @@ interface UIState {
   sidebarCollapsed: boolean
   /** 详情页 d 推荐面板的开关偏好（持久化跨会话记忆） */
   detailPanelOpen: boolean
+  /** 侧栏分类组折叠状态 */
+  categoriesGroupOpen: boolean
+  /** 侧栏画布组折叠状态（首次默认收起） */
+  canvasesGroupOpen: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setExploreMode: (mode: ExploreMode) => void
@@ -22,6 +26,8 @@ interface UIState {
   cycleGridSize: () => void
   toggleSidebar: () => void
   toggleDetailPanel: () => void
+  toggleCategoriesGroup: () => void
+  toggleCanvasesGroup: () => void
 }
 
 const GRID_ORDER: GridSize[] = ['small', 'medium', 'large']
@@ -34,6 +40,8 @@ export const useUIStore = create<UIState>()(
       gridSize: 'medium',
       sidebarCollapsed: false,
       detailPanelOpen: false,
+      categoriesGroupOpen: true,
+      canvasesGroupOpen: false,
 
       setTheme: (theme) => {
         set({ theme })
@@ -59,6 +67,10 @@ export const useUIStore = create<UIState>()(
       toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
 
       toggleDetailPanel: () => set((state) => ({ detailPanelOpen: !state.detailPanelOpen })),
+
+      toggleCategoriesGroup: () => set((state) => ({ categoriesGroupOpen: !state.categoriesGroupOpen })),
+
+      toggleCanvasesGroup: () => set((state) => ({ canvasesGroupOpen: !state.canvasesGroupOpen })),
     }),
     {
       name: 'serendip-ui',

@@ -6,49 +6,38 @@ import {
   verticalListSortingStrategy
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Folder, Pencil, Trash2 } from 'lucide-react'
+import { Presentation, Pencil, Trash2 } from "lucide-react"
 import clsx from 'clsx'
-import type { Category } from '../../../main/categories'
+import type { Canvas } from '../../../main/canvases'
 import { useLibraryStore } from '../stores/library'
-import { useCategoriesStore } from '../stores/categories'
+import { useCanvasesStore } from '../stores/canvases'
 import { ContextMenu, type ContextMenuItem } from './ContextMenu'
 
-interface CategoryListProps {
-  /** 当前正在拖拽的对象类型；当媒体被拖到分类时高亮该分类 */
+interface CanvasListProps {
   activeDragType: 'category' | 'media' | 'canvas' | null
-  /** 拖到的分类 id（用于高亮投放目标） */
-  hoveredDropCategoryId: number | null
-  /** 侧栏是否折叠（icon-only 模式） */
+  hoveredDropCanvasId: number | null
   collapsed?: boolean
-  onRename: (cat: Category) => void
-  onDelete: (cat: Category) => void
+  onRename: (canvas: Canvas) => void
+  onDelete: (canvas: Canvas) => void
 }
 
 interface MenuState {
   x: number
   y: number
-  category: Category
+  canvas: Canvas
 }
 
-/**
- * 侧栏分类列表 — 可重排（拖拽）+ 可作为媒体投放目标。
- *
- * 关键点：
- * - DndContext 由 App 提供，本组件只挂 SortableContext
- * - 每行只用 useSortable，把"分类拖排序"和"媒体拖入"共用同一个 droppable id
- *   （cat-{id}）；区分由 App 的 onDragEnd 根据 active.data.type 完成
- */
-export function CategoryList({
+export function CanvasList({
   activeDragType,
-  hoveredDropCategoryId,
+  hoveredDropCanvasId,
   collapsed,
   onRename,
   onDelete
-}: CategoryListProps): React.JSX.Element {
-  const categories = useCategoriesStore((s) => s.categories)
+}: CanvasListProps): React.JSX.Element {
+  const canvases = useCanvasesStore((s) => s.canvases)
   const [menu, setMenu] = useState<MenuState | null>(null)
 
-  const sortableIds = categories.map((c) => `cat-${c.id}`)
+  const sortableIds = canvases.map((c) => `canvas-${c.id}`)
 
   const menuItems: ContextMenuItem[] = menu
     ? [
@@ -56,22 +45,22 @@ export function CategoryList({
           key: 'rename',
           label: '重命名',
           icon: Pencil,
-          onClick: () => onRename(menu.category)
+          onClick: () => onRename(menu.canvas)
         },
         {
           key: 'delete',
-          label: '删除分类',
+          label: '删除画布',
           icon: Trash2,
           danger: true,
-          onClick: () => onDelete(menu.category)
+          onClick: () => onDelete(menu.canvas)
         }
       ]
     : []
 
-  if (categories.length === 0) {
+  if (canvases.length === 0) {
     return (
       <div className={clsx('py-3 text-xs text-muted-foreground italic', collapsed ? 'px-2 text-center' : 'px-5')}>
-        {collapsed ? '…' : '还没有分类，点 + 新建一个'}
+        {collapsed ? '…' : '还没有画布，点 + 新建一个'}
       </div>
     )
   }
@@ -80,17 +69,17 @@ export function CategoryList({
     <>
       <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
         <div className="space-y-0.5">
-          {categories.map((cat) => (
-            <CategoryRow
-              key={cat.id}
-              category={cat}
+          {canvases.map((canvas) => (
+            <CanvasRow
+              key={canvas.id}
+              canvas={canvas}
               collapsed={collapsed}
               isMediaHover={
-                activeDragType === 'media' && hoveredDropCategoryId === cat.id
+                activeDragType === 'media' && hoveredDropCanvasId === canvas.id
               }
               onContextMenu={(e) => {
                 e.preventDefault()
-                setMenu({ x: e.clientX, y: e.clientY, category: cat })
+                setMenu({ x: e.clientX, y: e.clientY, canvas })
               }}
             />
           ))}
@@ -109,19 +98,19 @@ export function CategoryList({
   )
 }
 
-interface CategoryRowProps {
-  category: Category
+interface CanvasRowProps {
+  canvas: Canvas
   collapsed?: boolean
   isMediaHover: boolean
   onContextMenu: (e: React.MouseEvent) => void
 }
 
-function CategoryRow({
-  category,
+function CanvasRow({
+  canvas,
   collapsed,
   isMediaHover,
   onContextMenu
-}: CategoryRowProps): React.JSX.Element {
+}: CanvasRowProps): React.JSX.Element {
   const view = useLibraryStore((s) => s.view)
   const setView = useLibraryStore((s) => s.setView)
   const [showTooltip, setShowTooltip] = useState(false)
@@ -136,11 +125,11 @@ function CategoryRow({
     transition,
     isDragging
   } = useSortable({
-    id: `cat-${category.id}`,
-    data: { type: 'category', categoryId: category.id, name: category.name }
+    id: `canvas-${canvas.id}`,
+    data: { type: 'canvas', canvasId: canvas.id, name: canvas.name }
   })
 
-  const isActive = view.kind === 'category' && view.id === category.id
+  const isActive = view.kind === 'canvas' && view.id === canvas.id
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -165,7 +154,7 @@ function CategoryRow({
         style={style}
         {...attributes}
         {...listeners}
-        onClick={() => setView({ kind: 'category', id: category.id })}
+        onClick={() => setView({ kind: 'canvas', id: canvas.id })}
         onContextMenu={onContextMenu}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={() => setShowTooltip(false)}
@@ -177,7 +166,7 @@ function CategoryRow({
           isMediaHover && 'ring-2 ring-primary ring-inset bg-primary/15'
         )}
       >
-        <Folder
+        <Presentation
           className={clsx(
             'w-4 h-4 flex-shrink-0',
             isActive ? 'text-primary' : 'text-muted-foreground'
@@ -185,23 +174,22 @@ function CategoryRow({
         />
         {!collapsed && (
           <>
-            <span className="flex-1 truncate">{category.name}</span>
+            <span className="flex-1 truncate">{canvas.name}</span>
             <span className="text-xs text-muted-foreground tabular-nums">
-              {category.itemCount}
+              {canvas.itemCount}
             </span>
           </>
         )}
       </div>
 
-      {/* 折叠态 tooltip — portal 到 body */}
       {collapsed && showTooltip && createPortal(
         <div
           className="fixed z-[200] pointer-events-none"
           style={{ left: 78, top: tooltipY }}
         >
           <div className="bg-sidebar border border-border text-foreground text-xs px-2.5 py-1.5 rounded-lg shadow-lg whitespace-nowrap flex items-center gap-2">
-            <span>{category.name}</span>
-            <span className="text-muted-foreground tabular-nums">{category.itemCount}</span>
+            <span>{canvas.name}</span>
+            <span className="text-muted-foreground tabular-nums">{canvas.itemCount}</span>
           </div>
         </div>,
         document.body

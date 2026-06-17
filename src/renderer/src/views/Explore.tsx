@@ -4,9 +4,12 @@ import { MasonryGrid } from '../components/MasonryGrid'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { SelectionToolbar } from '../components/SelectionToolbar'
+import { pushCanvasToast } from '../components/Toast'
 import { useUIStore } from '../stores/ui'
 import { useLibraryStore } from '../stores/library'
 import { useCategoriesStore } from '../stores/categories'
+import { useCanvasesStore } from '../stores/canvases'
+import { useCurrentCanvasStore } from '../stores/currentCanvas'
 import { useGridSelection } from '../stores/selection'
 import { useDetailStore } from '../stores/detail'
 import type { MediaItem } from '../../../main/recommender'
@@ -33,6 +36,9 @@ export function ExploreView(): React.JSX.Element {
   const categories = useCategoriesStore((s) => s.categories)
   const createCategory = useCategoriesStore((s) => s.create)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
+  const canvases = useCanvasesStore((s) => s.canvases)
+  const addItemsToCanvas = useCanvasesStore((s) => s.addItems)
+  const currentCanvasId = useCurrentCanvasStore((s) => s.currentCanvasId)
   const openDetail = useDetailStore((s) => s.open)
 
   const [items, setItems] = useState<MediaItem[]>([])
@@ -263,6 +269,42 @@ export function ExploreView(): React.JSX.Element {
     [getSelectedIds, deselectAll, createCategory, addItemsToCategory]
   )
 
+  const handleBatchAddToCanvas = useCallback(
+    async (canvasId: number) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      const canvas = canvases.find((c) => c.id === canvasId)
+      if (!canvas) return
+      deselectAll()
+      try {
+        const inputs = ids.map((fileId) => ({ fileId, x: 0, y: 0, w: 240, h: 180, z: 0 }))
+        await addItemsToCanvas(canvasId, inputs)
+        pushCanvasToast(canvasId, canvas.name, ids.length)
+      } catch (err) {
+        console.error('batchAddToCanvas failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, canvases, addItemsToCanvas]
+  )
+
+  const handleBatchCreateAndAddToCanvas = useCallback(
+    async (name: string) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      deselectAll()
+      try {
+        const canvasId = await window.api.createCanvas(name)
+        await useCanvasesStore.getState().load()
+        const inputs = ids.map((fileId) => ({ fileId, x: 0, y: 0, w: 240, h: 180, z: 0 }))
+        await addItemsToCanvas(canvasId, inputs)
+        pushCanvasToast(canvasId, name, ids.length)
+      } catch (err) {
+        console.error('batchCreateAndAddToCanvas failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, addItemsToCanvas]
+  )
+
   if (items.length === 0 && loading) {
     return (
       <div className="h-96 flex items-center justify-center">
@@ -375,10 +417,14 @@ export function ExploreView(): React.JSX.Element {
         onSelectAll={handleSelectAll}
         onDeselectAll={deselectAll}
         categories={categories}
+        canvases={canvases}
+        currentCanvasId={currentCanvasId}
         onLike={handleBatchLike}
         onDislike={handleBatchDislike}
         onAddToCategory={handleBatchAddToCategory}
         onCreateAndAddToCategory={handleBatchCreateAndAddToCategory}
+        onAddToCanvas={handleBatchAddToCanvas}
+        onCreateAndAddToCanvas={handleBatchCreateAndAddToCanvas}
       />
     </div>
   )

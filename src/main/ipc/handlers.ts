@@ -16,6 +16,22 @@ import {
   removeItemsFromCategory,
   getFileCategoryIds
 } from '../categories'
+import {
+  listCanvases,
+  createCanvas,
+  renameCanvas,
+  deleteCanvas,
+  reorderCanvases,
+  getCanvasItems,
+  addItemsToCanvas,
+  removeItemsFromCanvas,
+  updateCanvasItem,
+  updateCanvasItems,
+  updateCanvasViewport,
+  getFileCanvasIds,
+  type CanvasItemInput,
+  type CanvasItemPatch
+} from '../canvases'
 import { startWatcher } from '../watcher'
 
 export function registerIpcHandlers(): void {
@@ -189,6 +205,38 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC.GET_FILE_CATEGORY_IDS, (_event, fileId: number) =>
     getFileCategoryIds(fileId)
+  )
+
+  // ===== 画布 =====
+  ipcMain.handle(IPC.LIST_CANVASES, () => listCanvases())
+  ipcMain.handle(IPC.CREATE_CANVAS, (_event, name: string) => createCanvas(name))
+  ipcMain.handle(IPC.RENAME_CANVAS, (_event, id: number, newName: string) =>
+    renameCanvas(id, newName)
+  )
+  ipcMain.handle(IPC.DELETE_CANVAS, (_event, id: number) => deleteCanvas(id))
+  ipcMain.handle(IPC.REORDER_CANVASES, (_event, orderedIds: number[]) =>
+    reorderCanvases(orderedIds)
+  )
+  ipcMain.handle(IPC.GET_CANVAS_ITEMS, (_event, canvasId: number) =>
+    getCanvasItems(canvasId)
+  )
+  ipcMain.handle(IPC.ADD_ITEMS_TO_CANVAS, (_event, canvasId: number, items: CanvasItemInput[]) =>
+    addItemsToCanvas(canvasId, items)
+  )
+  ipcMain.handle(IPC.REMOVE_ITEMS_FROM_CANVAS, (_event, canvasId: number, itemIds: number[]) =>
+    removeItemsFromCanvas(canvasId, itemIds)
+  )
+  ipcMain.handle(IPC.UPDATE_CANVAS_ITEM, (_event, itemId: number, patch: Omit<CanvasItemPatch, 'id'>) =>
+    updateCanvasItem(itemId, patch)
+  )
+  ipcMain.handle(IPC.UPDATE_CANVAS_ITEMS, (_event, patches: CanvasItemPatch[]) =>
+    updateCanvasItems(patches)
+  )
+  ipcMain.handle(IPC.UPDATE_CANVAS_VIEWPORT, (_event, canvasId: number, x: number, y: number, scale: number) =>
+    updateCanvasViewport(canvasId, x, y, scale)
+  )
+  ipcMain.handle(IPC.GET_FILE_CANVAS_IDS, (_event, fileId: number) =>
+    getFileCanvasIds(fileId)
   )
 
   // ===== 窗口装饰 =====

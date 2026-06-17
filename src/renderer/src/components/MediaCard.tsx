@@ -1,9 +1,14 @@
 import { useState, useRef, useCallback, useEffect, memo } from 'react'
 import { useDraggable } from '@dnd-kit/core'
-import { Heart, MoreVertical, Play, Check } from 'lucide-react'
+import { Heart, MoreVertical, Play, Check, Presentation, ChevronUp } from 'lucide-react'
 import clsx from 'clsx'
 import type { MediaItem } from '../../../main/recommender'
 import { useSelectionStore, type SelectMods } from '../stores/selection'
+import { useCurrentCanvasStore } from '../stores/currentCanvas'
+import { useCanvasesStore } from '../stores/canvases'
+import { pushCanvasToast } from './Toast'
+import { CanvasPicker } from './CanvasPicker'
+import { Tooltip } from './Tooltip'
 
 interface MediaCardProps {
   item: MediaItem
@@ -20,7 +25,6 @@ interface MediaCardProps {
   /** 普通单击（非多选、无修饰键）打开详情页 */
   onOpenDetail?: (item: MediaItem) => void
 }
-
 const LONG_PRESS_MS = 500 // 长按进入多选的阈值
 const MOVE_CANCEL_PX = 8 // 移动超过此距离即取消长按（与拖拽阈值一致）
 
@@ -109,6 +113,15 @@ function MediaCardImpl({
   const selected = useSelectionStore((s) => s.selected.has(item.id))
   const selectionActive = useSelectionStore((s) => s.active)
 
+  // 画布相关状态
+  const currentCanvasId = useCurrentCanvasStore((s) => s.currentCanvasId)
+  const setCurrentCanvas = useCurrentCanvasStore((s) => s.setCurrent)
+  const canvases = useCanvasesStore((s) => s.canvases)
+  const addItemsToCanvas = useCanvasesStore((s) => s.addItems)
+  const [canvasPicker, setCanvasPicker] = useState<{ x: number; y: number; placement: 'top' | 'bottom' } | null>(null)
+  const capsuleRef = useRef<HTMLDivElement | null>(null)
+  const pickerTriggerRef = useRef<HTMLButtonElement | null>(null)
+
   // 长按检测：与拖拽共存。pointerdown 起计时，移动超阈值或松手即取消；
   // 触发后用 ref 标记，抑制随后的 click，避免再次切换选中
   const longPressTimerRef = useRef<number | null>(null)
@@ -147,6 +160,18 @@ function MediaCardImpl({
       if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current)
     }
   }, [])
+
+  // 滚动时关闭画布选择器
+  useEffect(() => {
+    if (!canvasPicker) return
+    const handleScroll = (): void => {
+      setCanvasPicker(null)
+    }
+    window.addEventListener('scroll', handleScroll, true)
+    return () => {
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [canvasPicker])
 
   const handleHoverStart = useCallback(() => {
     setHovered(true)
@@ -255,6 +280,75 @@ function MediaCardImpl({
     onLikeToggle(item.id, !liked)
   }
 
+  const handleAddToCanvas = useCallback(
+    async (e: React.MouseEvent): Promise<void> => {
+      e.stopPropagation()
+
+      // 无当前画布：自动新建
+      if (currentCanvasId === null) {
+        let baseName = '新画布'
+        let finalName = baseName
+        let counter = 1
+        while (canvases.some((c) => c.name === finalName)) {
+          finalName = `${baseName} ${counter}`
+          counter++
+        }
+        try {
+          const id = await window.api.createCanvas(finalName)
+          await useCanvasesStore.getState().load()
+          setCurrentCanvas(id)
+          await addItemsToCanvas(id, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+          pushCanvasToast(id, finalName, 1)
+        } catch (err) {
+          console.error('Failed to auto-create canvas:', err)
+        }
+        return
+      }
+
+      // 有当前画布：直接加
+      const canvas = canvases.find((c) => c.id === currentCanvasId)
+      if (!canvas) return
+      await addItemsToCanvas(currentCanvasId, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      pushCanvasToast(currentCanvasId, canvas.name, 1)
+    },
+    [currentCanvasId, canvases, addItemsToCanvas, setCurrentCanvas, item.id]
+  )
+
+  const handleOpenPicker = useCallback((e: React.MouseEvent): void => {
+    e.stopPropagation()
+    if (canvasPicker) { setCanvasPicker(null); return }
+    const r = capsuleRef.current?.getBoundingClientRect()
+    if (!r) return
+    const placement = r.top > window.innerHeight / 2 ? 'top' : 'bottom'
+    setCanvasPicker({ x: r.right, y: placement === 'top' ? r.top : r.bottom, placement })
+  }, [canvasPicker])
+
+  const handleCanvasPickerSelect = useCallback(
+    async (canvasId: number): Promise<void> => {
+      setCanvasPicker(null)
+      const canvas = canvases.find((c) => c.id === canvasId)
+      if (!canvas) return
+      await addItemsToCanvas(canvasId, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      pushCanvasToast(canvasId, canvas.name, 1)
+    },
+    [canvases, addItemsToCanvas, item.id]
+  )
+
+  const handleCanvasPickerCreate = useCallback(
+    async (name: string): Promise<void> => {
+      setCanvasPicker(null)
+      try {
+        const id = await window.api.createCanvas(name)
+        await useCanvasesStore.getState().load()
+        await addItemsToCanvas(id, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+        pushCanvasToast(id, name, 1)
+      } catch (err) {
+        console.error('createCanvas failed:', err)
+      }
+    },
+    [addItemsToCanvas, item.id]
+  )
+
   const handleImgError = useCallback((): void => {
     setImgError(true)
     onThumbError?.(item)
@@ -299,6 +393,12 @@ function MediaCardImpl({
         longPressFiredRef.current = false
         e.preventDefault()
         return
+      }
+      // 如果按下位置和松开位置有明显偏移（触控板轻扫），不触发详情
+      if (pressStartRef.current) {
+        const dx = e.clientX - pressStartRef.current.x
+        const dy = e.clientY - pressStartRef.current.y
+        if (Math.abs(dx) > MOVE_CANCEL_PX || Math.abs(dy) > MOVE_CANCEL_PX) return
       }
       const mods: SelectMods = { ctrlOrMeta: e.ctrlKey || e.metaKey, shift: e.shiftKey }
       if (selectionActive || mods.ctrlOrMeta || mods.shift) {
@@ -390,6 +490,7 @@ function MediaCardImpl({
       />
       <button
         onClick={handleLikeClick}
+        onPointerDown={(e) => e.stopPropagation()}
         className={clsx(
           'absolute bottom-2 left-2 p-2 rounded-full backdrop-blur transition-all',
           hovered || liked ? 'opacity-100' : 'opacity-0',
@@ -402,6 +503,59 @@ function MediaCardImpl({
           className={clsx('w-4 h-4', liked && 'fill-current')}
         />
       </button>
+
+      {/* 加入画布胶囊按钮（非多选模式可见） */}
+      {!selectionActive && (
+        <div
+          ref={capsuleRef}
+          className={clsx(
+            'absolute bottom-2 right-2 flex items-center rounded-full backdrop-blur bg-black/40 text-white overflow-hidden transition-opacity',
+            hovered ? 'opacity-100' : 'opacity-0'
+          )}
+        >
+          {/* 左半：加入当前画布 / 自动创建 */}
+          <Tooltip text={currentCanvasId ? '加入当前画布' : '新建画布并加入'}>
+            <button
+              onClick={(e) => { void handleAddToCanvas(e) }}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="px-2.5 py-2 hover:bg-primary/80 transition-colors"
+            >
+              <Presentation className="w-4 h-4" />
+            </button>
+          </Tooltip>
+          {/* 分隔线 */}
+          <div className="w-px h-4 bg-white/20 flex-shrink-0" />
+          {/* 右半：展开画布选择器 */}
+          <Tooltip text="选择画布">
+            <button
+              ref={pickerTriggerRef}
+              onClick={handleOpenPicker}
+              onPointerDown={(e) => e.stopPropagation()}
+              className={clsx(
+                'px-2 py-2 transition-colors',
+                canvasPicker ? 'bg-primary/80 text-white' : 'hover:bg-primary/80'
+              )}
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
+        </div>
+      )}
+
+      {/* 画布 picker */}
+      {canvasPicker && (
+        <CanvasPicker
+          x={canvasPicker.x}
+          y={canvasPicker.y}
+          placement={canvasPicker.placement}
+          alignRight
+          triggerRef={pickerTriggerRef}
+          canvases={canvases}
+          onSelect={(id) => { void handleCanvasPickerSelect(id) }}
+          onCreateAndSelect={(name) => { void handleCanvasPickerCreate(name) }}
+          onClose={() => setCanvasPicker(null)}
+        />
+      )}
 
       {/* 多选复选框：仅多选模式常显，pointer-events-none 让点击落到卡片以切换选中。
           不加 z 抬层，否则会越过 header 的 sticky 层级盖在顶栏之上 */}
@@ -425,12 +579,13 @@ function MediaCardImpl({
             e.stopPropagation()
             onContextMenu?.(e, item)
           }}
+          onPointerDown={(e) => e.stopPropagation()}
           className={clsx(
-            'absolute top-2 left-2 p-1.5 rounded-full bg-black/40 backdrop-blur text-white transition-opacity',
+            'absolute top-2 left-2 p-2 rounded-full bg-black/40 backdrop-blur text-white transition-opacity',
             hovered ? 'opacity-100' : 'opacity-0'
           )}
         >
-          <MoreVertical className="w-3.5 h-3.5" />
+          <MoreVertical className="w-4 h-4" />
         </button>
       )}
     </div>

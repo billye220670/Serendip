@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Undo2, SkipForward, Loader2 } from 'lucide-react'
 import clsx from 'clsx'
+import { Tooltip } from '../components/Tooltip'
 import { useCategoriesStore } from '../stores/categories'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
@@ -447,34 +448,36 @@ export function ReviewView(): React.JSX.Element {
       </div>
 
       {/* 撤销 — 左上角 */}
-      <button
-        className={clsx(
-          'absolute top-8 left-8 z-20 p-3 rounded-full backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed',
-          isDark
-            ? 'bg-black/50 text-white hover:bg-black/65'
-            : 'bg-white/70 text-gray-900 hover:bg-white/85'
-        )}
-        onClick={() => void doUndo()}
-        disabled={undoStackRef.current.length === 0}
-        title="撤销（Backspace）"
-      >
-        <Undo2 className="w-6 h-6" />
-      </button>
+      <Tooltip text="撤销（Backspace）" side="bottom">
+        <button
+          className={clsx(
+            'absolute top-8 left-8 z-20 p-3 rounded-full backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed',
+            isDark
+              ? 'bg-black/50 text-white hover:bg-black/65'
+              : 'bg-white/70 text-gray-900 hover:bg-white/85'
+          )}
+          onClick={() => void doUndo()}
+          disabled={undoStackRef.current.length === 0}
+        >
+          <Undo2 className="w-6 h-6" />
+        </button>
+      </Tooltip>
 
       {/* 跳过 — 右上角 */}
-      <button
-        className={clsx(
-          'absolute top-8 right-8 z-20 p-3 rounded-full backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed',
-          isDark
-            ? 'bg-black/50 text-white hover:bg-black/65'
-            : 'bg-white/70 text-gray-900 hover:bg-white/85'
-        )}
-        onClick={() => void doSkip()}
-        disabled={!currentItem || isFly}
-        title="跳过（Space）"
-      >
-        <SkipForward className="w-6 h-6" />
-      </button>
+      <Tooltip text="跳过（Space）" side="bottom">
+        <button
+          className={clsx(
+            'absolute top-8 right-8 z-20 p-3 rounded-full backdrop-blur-sm transition-colors disabled:opacity-25 disabled:cursor-not-allowed',
+            isDark
+              ? 'bg-black/50 text-white hover:bg-black/65'
+              : 'bg-white/70 text-gray-900 hover:bg-white/85'
+          )}
+          onClick={() => void doSkip()}
+          disabled={!currentItem || isFly}
+        >
+          <SkipForward className="w-6 h-6" />
+        </button>
+      </Tooltip>
 
       {/* 分类胶囊 — 固定面板底部 */}
       {categories.length > 0 && currentItem && (

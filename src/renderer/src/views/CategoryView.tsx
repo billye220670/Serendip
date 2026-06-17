@@ -5,7 +5,10 @@ import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { SelectionToolbar } from '../components/SelectionToolbar'
+import { pushCanvasToast } from '../components/Toast'
 import { useCategoriesStore } from '../stores/categories'
+import { useCanvasesStore } from '../stores/canvases'
+import { useCurrentCanvasStore } from '../stores/currentCanvas'
 import { useLibraryStore } from '../stores/library'
 import { useGridSelection } from '../stores/selection'
 import { useDetailStore } from '../stores/detail'
@@ -34,6 +37,9 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const removeItem = useCategoriesStore((s) => s.removeItem)
   const removeItems = useCategoriesStore((s) => s.removeItems)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
+  const canvases = useCanvasesStore((s) => s.canvases)
+  const addItemsToCanvas = useCanvasesStore((s) => s.addItems)
+  const currentCanvasId = useCurrentCanvasStore((s) => s.currentCanvasId)
   const view = useLibraryStore((s) => s.view)
   const categoryRefreshNonce = useLibraryStore((s) => s.categoryRefreshNonce)
   const openDetail = useDetailStore((s) => s.open)
@@ -193,6 +199,42 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     [getSelectedIds, deselectAll, createCategory, addItemsToCategory]
   )
 
+  const handleBatchAddToCanvas = useCallback(
+    async (canvasId: number) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      const canvas = canvases.find((c) => c.id === canvasId)
+      if (!canvas) return
+      deselectAll()
+      try {
+        const inputs = ids.map((fileId) => ({ fileId, x: 0, y: 0, w: 240, h: 180, z: 0 }))
+        await addItemsToCanvas(canvasId, inputs)
+        pushCanvasToast(canvasId, canvas.name, ids.length)
+      } catch (err) {
+        console.error('batchAddToCanvas failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, canvases, addItemsToCanvas]
+  )
+
+  const handleBatchCreateAndAddToCanvas = useCallback(
+    async (name: string) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      deselectAll()
+      try {
+        const canvasId = await window.api.createCanvas(name)
+        await useCanvasesStore.getState().load()
+        const inputs = ids.map((fileId) => ({ fileId, x: 0, y: 0, w: 240, h: 180, z: 0 }))
+        await addItemsToCanvas(canvasId, inputs)
+        pushCanvasToast(canvasId, name, ids.length)
+      } catch (err) {
+        console.error('batchCreateAndAddToCanvas failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, addItemsToCanvas]
+  )
+
   const performBatchRemove = useCallback(async () => {
     const ids = getSelectedIds()
     if (ids.length === 0) return
@@ -336,9 +378,13 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
         onSelectAll={handleSelectAll}
         onDeselectAll={deselectAll}
         categories={otherCategories}
+        canvases={canvases}
+        currentCanvasId={currentCanvasId}
         onLike={handleBatchLike}
         onAddToCategory={handleBatchAddToCategory}
         onCreateAndAddToCategory={handleBatchCreateAndAddToCategory}
+        onAddToCanvas={handleBatchAddToCanvas}
+        onCreateAndAddToCanvas={handleBatchCreateAndAddToCanvas}
         onRemoveFromCategory={() => setConfirmBatchRemove(true)}
       />
 

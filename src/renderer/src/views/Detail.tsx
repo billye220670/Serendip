@@ -1,14 +1,19 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp } from 'lucide-react'
 import clsx from 'clsx'
 import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
 import { usePanelRecommendationsStore } from '../stores/panelRecommendations'
 import { useCategoriesStore } from '../stores/categories'
+import { useCanvasesStore } from '../stores/canvases'
+import { useCurrentCanvasStore } from '../stores/currentCanvas'
 import { CategorySearchPanel } from '../components/CategorySearchPanel'
+import { CanvasPicker } from '../components/CanvasPicker'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
+import { pushCanvasToast } from '../components/Toast'
+import { Tooltip } from '../components/Tooltip'
 import { IPC } from '../../../main/ipc/contract'
 import type { MediaItem } from '../../../main/recommender'
 
@@ -50,10 +55,18 @@ export function DetailView(): React.JSX.Element | null {
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const removeItemsFromCategory = useCategoriesStore((s) => s.removeItems)
   const createCategory = useCategoriesStore((s) => s.create)
+  const canvases = useCanvasesStore((s) => s.canvases)
+  const addItemsToCanvas = useCanvasesStore((s) => s.addItems)
+  const currentCanvasId = useCurrentCanvasStore((s) => s.currentCanvasId)
+
+  const setCurrentCanvas = useCurrentCanvasStore((s) => s.setCurrent)
 
   const [itemLiked, setItemLiked] = useState(false)
   const [itemCategoryIds, setItemCategoryIds] = useState<Set<number>>(new Set())
   const [searchOpen, setSearchOpen] = useState(false)
+  const [canvasPicker, setCanvasPicker] = useState<{ x: number; y: number; placement: 'top' | 'bottom' } | null>(null)
+  const capsuleRef = useRef<HTMLDivElement | null>(null)
+  const pickerTriggerRef = useRef<HTMLButtonElement | null>(null)
 
   // 打开详情页时确保分类列表已加载
   useEffect(() => {
@@ -78,6 +91,7 @@ export function DetailView(): React.JSX.Element | null {
   // 切图时关闭搜索面板
   useEffect(() => {
     setSearchOpen(false)
+    setCanvasPicker(null)
   }, [currentItem?.id])
 
   const handleLikeToggle = useCallback(async () => {
@@ -115,6 +129,76 @@ export function DetailView(): React.JSX.Element | null {
       await addItemsToCategory(newId, [currentItem.id])
     },
     [currentItem, createCategory, addItemsToCategory]
+  )
+
+  const handleAddToCanvas = useCallback(
+    async (e: React.MouseEvent) => {
+      if (!currentItem) return
+      e.stopPropagation()
+      // 无当前画布：自动新建
+      if (currentCanvasId === null) {
+        let baseName = '新画布'
+        let finalName = baseName
+        let counter = 1
+        while (canvases.some((c) => c.name === finalName)) {
+          finalName = `${baseName} ${counter}`
+          counter++
+        }
+        try {
+          const id = await window.api.createCanvas(finalName)
+          await useCanvasesStore.getState().load()
+          setCurrentCanvas(id)
+          await addItemsToCanvas(id, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+          pushCanvasToast(id, finalName, 1)
+        } catch (err) {
+          console.error('Failed to auto-create canvas:', err)
+        }
+        return
+      }
+      const canvas = canvases.find((c) => c.id === currentCanvasId)
+      if (!canvas) return
+      await addItemsToCanvas(currentCanvasId, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      pushCanvasToast(currentCanvasId, canvas.name, 1)
+    },
+    [currentItem, currentCanvasId, canvases, addItemsToCanvas, setCurrentCanvas]
+  )
+
+  const handleOpenCanvasPicker = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (canvasPicker) { setCanvasPicker(null); return }
+    const r = capsuleRef.current?.getBoundingClientRect()
+    if (!r) return
+    const placement = r.top > window.innerHeight / 2 ? 'top' : 'bottom'
+    setCanvasPicker({ x: r.right, y: placement === 'top' ? r.top : r.bottom, placement })
+  }, [canvasPicker])
+
+  const handleCanvasPickerSelect = useCallback(
+    async (canvasId: number) => {
+      if (!currentItem) return
+      setCanvasPicker(null)
+      const canvas = canvases.find((c) => c.id === canvasId)
+      if (!canvas) return
+      await addItemsToCanvas(canvasId, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      pushCanvasToast(canvasId, canvas.name, 1)
+    },
+    [currentItem, canvases, addItemsToCanvas]
+  )
+
+  const handleCanvasPickerCreate = useCallback(
+    async (name: string) => {
+      if (!currentItem) return
+      setCanvasPicker(null)
+      try {
+        const id = await window.api.createCanvas(name)
+        await useCanvasesStore.getState().load()
+        setCurrentCanvas(id)
+        await addItemsToCanvas(id, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+        pushCanvasToast(id, name, 1)
+      } catch (err) {
+        console.error('createCanvas failed:', err)
+      }
+    },
+    [currentItem, addItemsToCanvas, setCurrentCanvas]
   )
 
   // 面板数据 reset：folder_path 变化时触发（同路径下切换图不重置）
@@ -257,18 +341,19 @@ export function DetailView(): React.JSX.Element | null {
         </div>
 
         {/* 面板开关按钮：fixed 定位；全屏时贴右，非全屏时让出 WCO 系统按钮区 */}
-        <button
-          onClick={togglePanel}
-          aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
-          title={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'}
-          className={clsx(
-            'fixed z-[60] grid place-items-center p-2 rounded-lg transition-colors focus:outline-none focus-visible:outline-none',
-            isLight ? 'text-gray-700 hover:bg-black/10' : 'text-white/80 hover:bg-white/15'
-          )}
-          style={{ top: 16, right: isFullscreen ? 8 : 148, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-        >
-          {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
-        </button>
+        <Tooltip text={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'} side="bottom">
+          <button
+            onClick={togglePanel}
+            aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
+            className={clsx(
+              'fixed z-[60] grid place-items-center p-2 rounded-lg transition-colors focus:outline-none focus-visible:outline-none',
+              isLight ? 'text-gray-700 hover:bg-black/10' : 'text-white/80 hover:bg-white/15'
+            )}
+            style={{ top: 16, right: isFullscreen ? 8 : 148, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
+            {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
+          </button>
+        </Tooltip>
 
         {/* 内容区（瞬切，无位移动效）。父容器宽度随面板挤压收缩，img 自动 fit */}
         <div className="w-full h-full flex items-center justify-center">
@@ -304,21 +389,22 @@ export function DetailView(): React.JSX.Element | null {
 
           {/* h：# 按钮，relative 用于面板锚定 */}
           <div className="relative">
-            <button
-              onClick={() => setSearchOpen((v) => !v)}
-              aria-label="管理分类"
-              title="管理分类"
-              className={clsx(
-                'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
-                searchOpen
-                  ? 'bg-primary text-white'
-                  : isLight
-                    ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
-                    : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
-              )}
-            >
-              <Hash className="w-5 h-5" />
-            </button>
+            <Tooltip text="管理分类" side="top">
+              <button
+                onClick={() => setSearchOpen((v) => !v)}
+                aria-label="管理分类"
+                className={clsx(
+                  'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
+                  searchOpen
+                    ? 'bg-primary text-white'
+                    : isLight
+                      ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
+                      : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                )}
+              >
+                <Hash className="w-5 h-5" />
+              </button>
+            </Tooltip>
 
             {/* 分类搜索面板：absolute bottom-full，锚定在 # 按钮上方 */}
             {searchOpen && (
@@ -333,6 +419,57 @@ export function DetailView(): React.JSX.Element | null {
             )}
           </div>
         </div>
+
+        {/* 加入画布胶囊：绝对定位在图片区右下角，随推荐面板打开被左推 */}
+        <div
+          ref={capsuleRef}
+          className={clsx(
+            'absolute bottom-5 right-4 z-20 flex items-center rounded-full backdrop-blur-sm overflow-hidden',
+            isLight ? 'bg-white/70 text-gray-900/60' : 'bg-black/45 text-white/70'
+          )}
+        >
+          <Tooltip text={currentCanvasId ? '加入当前画布' : '新建画布并加入'}>
+            <button
+              onClick={(e) => { void handleAddToCanvas(e) }}
+              className={clsx(
+                'px-3.5 py-3 transition-colors focus:outline-none',
+                isLight ? 'hover:bg-white/85 hover:text-gray-900' : 'hover:bg-black/65 hover:text-white'
+              )}
+            >
+              <Presentation className="w-5 h-5" />
+            </button>
+          </Tooltip>
+          <div className={clsx('w-px h-4 flex-shrink-0', isLight ? 'bg-foreground/15' : 'bg-white/25')} />
+          <Tooltip text="选择画布">
+            <button
+              ref={pickerTriggerRef}
+              onClick={handleOpenCanvasPicker}
+              className={clsx(
+                'px-2.5 py-3 transition-colors focus:outline-none',
+                canvasPicker
+                  ? 'bg-primary/80 text-white'
+                  : isLight ? 'hover:bg-white/85 hover:text-gray-900' : 'hover:bg-black/65 hover:text-white'
+              )}
+            >
+              <ChevronUp className="w-4 h-4" />
+            </button>
+          </Tooltip>
+        </div>
+
+        {/* 画布 picker */}
+        {canvasPicker && (
+          <CanvasPicker
+            x={canvasPicker.x}
+            y={canvasPicker.y}
+            placement={canvasPicker.placement}
+            alignRight
+            triggerRef={pickerTriggerRef}
+            canvases={canvases}
+            onSelect={(id) => { void handleCanvasPickerSelect(id) }}
+            onCreateAndSelect={(name) => { void handleCanvasPickerCreate(name) }}
+            onClose={() => setCanvasPicker(null)}
+          />
+        )}
 
         {/* 面板打开时的透明点击捕获层（点面板外区域关闭，z-[19] 低于操作区 z-20） */}
         {searchOpen && (

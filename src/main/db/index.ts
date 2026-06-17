@@ -135,6 +135,44 @@ function runMigrations(db: Database.Database): void {
         -- 给已存在的分类按 id 排个初始位置
         UPDATE categories SET position = id;
       `
+    },
+    // 迁移 4: 画布表 + 画布项目表（用于 Canvas 模式）
+    {
+      version: 4,
+      up: `
+        -- 画布表
+        CREATE TABLE canvases (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT UNIQUE NOT NULL,
+          position INTEGER NOT NULL DEFAULT 0,
+          viewport_x REAL NOT NULL DEFAULT 0,
+          viewport_y REAL NOT NULL DEFAULT 0,
+          viewport_scale REAL NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch())
+        );
+
+        CREATE INDEX idx_canvases_position ON canvases(position);
+
+        -- 画布项目表（无 UNIQUE 约束，同文件可多次加入同一画布）
+        CREATE TABLE canvas_items (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          canvas_id INTEGER NOT NULL,
+          file_id INTEGER NOT NULL,
+          x REAL NOT NULL DEFAULT 0,
+          y REAL NOT NULL DEFAULT 0,
+          w REAL NOT NULL DEFAULT 240,
+          h REAL NOT NULL DEFAULT 180,
+          rotation REAL NOT NULL DEFAULT 0,
+          z INTEGER NOT NULL DEFAULT 0,
+          clip_polygon TEXT,
+          added_at INTEGER NOT NULL DEFAULT (unixepoch()),
+          FOREIGN KEY (canvas_id) REFERENCES canvases(id) ON DELETE CASCADE,
+          FOREIGN KEY (file_id) REFERENCES media_files(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_canvas_items_canvas ON canvas_items(canvas_id);
+        CREATE INDEX idx_canvas_items_file ON canvas_items(file_id);
+      `
     }
   ]
 
