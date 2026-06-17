@@ -17,6 +17,8 @@ interface UIState {
   categoriesGroupOpen: boolean
   /** 侧栏画布组折叠状态（首次默认收起） */
   canvasesGroupOpen: boolean
+  /** 画布全部视频静止（图片化）开关 */
+  canvasFreezeVideos: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setExploreMode: (mode: ExploreMode) => void
@@ -28,6 +30,7 @@ interface UIState {
   toggleDetailPanel: () => void
   toggleCategoriesGroup: () => void
   toggleCanvasesGroup: () => void
+  toggleFreezeVideos: () => void
 }
 
 const GRID_ORDER: GridSize[] = ['small', 'medium', 'large']
@@ -42,6 +45,7 @@ export const useUIStore = create<UIState>()(
       detailPanelOpen: false,
       categoriesGroupOpen: true,
       canvasesGroupOpen: false,
+      canvasFreezeVideos: false,
 
       setTheme: (theme) => {
         set({ theme })
@@ -71,6 +75,8 @@ export const useUIStore = create<UIState>()(
       toggleCategoriesGroup: () => set((state) => ({ categoriesGroupOpen: !state.categoriesGroupOpen })),
 
       toggleCanvasesGroup: () => set((state) => ({ canvasesGroupOpen: !state.canvasesGroupOpen })),
+
+      toggleFreezeVideos: () => set((state) => ({ canvasFreezeVideos: !state.canvasFreezeVideos })),
     }),
     {
       name: 'serendip-ui',

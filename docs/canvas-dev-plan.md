@@ -442,6 +442,45 @@ interface CanvasSelectionState {
 
 ---
 
+### 阶段 2 回顾（已完成，以下记录实际落地与原文档的出入）
+
+#### 设计变动
+
+**1. 离散档位缩放取代百分比显示**
+
+原文档：工具栏显示缩放原始百分比（如 `100%`）；滚轮区分 ctrlKey/pan。
+
+**实际落地**：用户确认改为离散档位，`ZOOM_STEP = 1.2`，`scale=1` 为 0 档；工具栏显示 `0` / `+N` / `-N`。滚轮**直接缩放，无需 Ctrl**，pan 只走中键/Space+左键。工具栏移除了"回到原点"按钮。
+
+---
+
+**2. 原图渐进加载（额外优化，原计划未含）**
+
+原文档：`CanvasItemNode` 只用 `serendip://thumb/<id>`（"先用 thumb，原图等阶段 4"）。
+
+**实际落地**：阶段 2 就实装了原图渐进加载：
+- 两层渲染：thumb 始终存在作底层，全图层预加载完成后淡入覆盖（`canvas-fadein` 0.4s keyframe）
+- 错开加载：`index × 150ms` 防止 I/O 并发冲击
+- 协议层修复：`serveFullImage` 的 `Cache-Control` 由 `no-cache` → `max-age=3600`
+
+原因：画布目标是沉浸欣赏，缩略图用于占位的时间应尽量短。
+
+---
+
+**3. 视频元素提前显示缩略图（原计划阶段 3 才做）**
+
+原文档：`CanvasItemNode` 对 `item.fileType === 'video'` 早退 `return null`。
+
+**实际落地**：移除早退，视频也显示 `serendip://thumb/<id>` 第一帧缩略图（不播放）。完整视频播放逻辑仍留阶段 3 实现。
+
+---
+
+#### 踩坑记录
+
+无新踩坑。阶段 2 执行较顺畅，主要变动来自用户交互优化需求（缩放档位、原图加载）而非预期外的技术障碍。
+
+---
+
 ### 阶段 3：选择 + 变换（移动 / 8 手柄缩放 / 旋转）+ 视频元素 + 出视口暂停
 
 **目标**：单选/多选/框选；选中元素显示 8 手柄 + 旋转柄；移动/缩放/旋转跟手；锚点跟手柄走；视频元素渲染并接入完整性能管理（出视口 pause）。
@@ -522,7 +561,71 @@ interface CanvasSelectionState {
 
 ---
 
-### 阶段 4：层级 + 删除 + 撤销栈 + 方向键 navigate + 原图加载
+### 阶段 3 回顾（已完成，以下记录实际落地与原文档的出入）
+
+#### 设计变动
+
+**1. IntersectionObserver 观察目标通过 nodeRef prop 传入**
+
+原文档：`CanvasVideoNode` 内部通过 `videoRef.current?.closest('[data-canvas-item-id]')` 找观察节点。
+
+**实际落地**：`CanvasVideoNode` 增加了 `nodeRef: React.RefObject<HTMLDivElement | null>` prop，由父组件 `CanvasItemNode` 传入自己的根 div ref。
+
+原因：`videoRef` 在 video 节点未挂载时为 null，无法用 `closest` 找到根节点；直接传 nodeRef 更可靠。
+
+---
+
+**2. 选区清空放在 unmount effect 而不是 unload 回调**
+
+原文档未明确。
+
+**实际落地**：`selectionClear()` 在 `CanvasView` 的 unmount cleanup 中调用（与 `unload()` 同位置），避免切换画布时选区残留在新画布。
+
+---
+
+**3. Selecto 的 container 用 useState + callback ref 而非 ref.current**
+
+原文档：`container={containerRef.current}` 在 JSX 中直接访问 ref.current。
+
+**实际落地**：改用 `containerCallbackRef`（同时更新 `containerRef.current` 和 `containerEl` state），Selecto 渲染时条件为 `{containerEl && <Selecto container={containerEl} />}`，绕过 lint 的 "Cannot access refs during render" 错误。
+
+---
+
+**4. F 聚焦支持选中子集**
+
+原文档：F 聚焦对"选中（阶段 3 选中实装后再覆盖）"提了预期但未明确实现。
+
+**实际落地**：阶段 3 直接实现了选中子集聚焦：`selected.size > 0` 时 fit 选中元素，否则 fit 全部元素。
+
+---
+
+**5. Moveable 坐标系设计：DOM 直改 + 结束时 flush**
+
+原文档：用 react-moveable 事件的 dist/delta 反算世界坐标。
+
+**实际落地**：拖动/缩放/旋转期间 Moveable 直接修改 DOM transform（不触发 React 重渲染，零延迟），结束事件（onDragEnd / onResizeEnd / onRotateEnd）时从 `lastEvent` 读取最终 dist，反算世界坐标 patch 后调用 `updateItems`（乐观更新 store，debounce 250ms flush 到 DB）。`el.style.transform = ''` + `moveableRef.current?.updateRect()` 让 React 重新接管。
+
+---
+
+**6. target={数组} 代替多个独立 Moveable**
+
+原文档设计了 `targets` prop 用法，但具体实现未明确。
+
+**实际落地**：使用 react-moveable v0.47+ 的 `target={HTMLElement[]}` 数组 prop（无 targets 复数），单元素时触发 `onDrag` 等，多元素时自动切为 Group 模式触发 `onDragGroup` 等。两组事件均实现。
+
+---
+
+#### 踩坑记录
+
+**踩坑 1：`useRef(null)` 返回只读 current**
+
+`const containerRef = useRef<HTMLDivElement>(null)` 得到 `RefObject<HTMLDivElement>`，其 `current` 是只读的。在 callback ref 中赋值 `containerRef.current = el` 时 TypeScript 报错 `Cannot assign to 'current' because it is a read-only property`。
+
+解决：改为 `useRef<HTMLDivElement | null>(null)` 得到 `MutableRefObject<HTMLDivElement | null>`，current 可赋值。
+
+---
+
+
 
 **目标**：层级快捷键；Delete 移除元素；Ctrl+Z/Y 撤销重做；方向键智能 navigate；图片元素从 thumb 升级到原图（blur-up 或瞬切）。
 

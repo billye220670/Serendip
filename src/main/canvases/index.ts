@@ -156,9 +156,13 @@ export function getCanvasItems(canvasId: number): CanvasItem[] {
   return rows
 }
 
+// 图片在画布上的目标显示宽度（世界像素）
+const CANVAS_DISPLAY_W = 300
+
 /**
  * 把多个媒体项加入画布（允许同文件多次加入，不去重）。
  * 返回新建的 canvas_item id 列表。
+ * w/h 以文件实际宽高比推算（目标宽 CANVAS_DISPLAY_W），未知时沿用 input 传入值。
  */
 export function addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): number[] {
   if (items.length === 0) return []
@@ -167,13 +171,23 @@ export function addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): nu
   const canvas = db.prepare('SELECT id FROM canvases WHERE id = ?').get(canvasId)
   if (!canvas) throw new Error('画布不存在')
 
+  const getDims = db.prepare<[number], { width: number | null; height: number | null }>(
+    'SELECT width, height FROM media_files WHERE id = ?'
+  )
   const insert = db.prepare(
     'INSERT INTO canvas_items (canvas_id, file_id, x, y, w, h, z) VALUES (?, ?, ?, ?, ?, ?, ?)'
   )
   const ids: number[] = []
   const txn = db.transaction((inputs: CanvasItemInput[]) => {
     for (const item of inputs) {
-      const r = insert.run(canvasId, item.fileId, item.x, item.y, item.w, item.h, item.z)
+      const dims = getDims.get(item.fileId)
+      let w = item.w
+      let h = item.h
+      if (dims?.width && dims.height && dims.width > 0 && dims.height > 0) {
+        w = CANVAS_DISPLAY_W
+        h = Math.round(CANVAS_DISPLAY_W * (dims.height / dims.width))
+      }
+      const r = insert.run(canvasId, item.fileId, item.x, item.y, w, h, item.z)
       ids.push(Number(r.lastInsertRowid))
     }
   })
