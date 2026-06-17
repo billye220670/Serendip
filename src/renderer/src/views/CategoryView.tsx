@@ -20,6 +20,7 @@ interface MenuState {
 interface PickerState {
   x: number
   y: number
+  parentLeft: number
   item: MediaItem
 }
 
@@ -241,7 +242,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
                 icon: FolderPlus,
                 submenuOpen: !!picker,
                 onSubmenuOpen: (rect: DOMRect) => {
-                  setPicker({ x: rect.right, y: rect.top, item: menu.item })
+                  setPicker({ x: rect.right, y: rect.top, parentLeft: rect.left, item: menu.item })
                 }
               }
             ] as ContextMenuItem[])
@@ -281,13 +282,14 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
       )}
 
       {menu && (
-        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} onSubmenuClose={() => setPicker(null)} />
       )}
 
       {picker && (
         <CategoryPicker
           x={picker.x}
           y={picker.y}
+          parentLeft={picker.parentLeft}
           placement="submenu"
           categories={otherCategories}
           onSelect={(id) => void addItemsToCategory(id, [picker.item.id])}

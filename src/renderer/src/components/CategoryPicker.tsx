@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Search, Plus, Folder } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../../main/categories'
+import { IPC } from '../../../main/ipc/contract'
 
 export interface CategoryPickerProps {
   /** 锚点坐标：
@@ -12,6 +13,8 @@ export interface CategoryPickerProps {
    */
   x: number
   y: number
+  /** submenu 模式下父菜单的左边 x（用于向左翻转时对齐） */
+  parentLeft?: number
   placement?: 'top' | 'submenu' | 'cursor'
   categories: Category[]
   onSelect: (categoryId: number) => void
@@ -19,23 +22,10 @@ export interface CategoryPickerProps {
   onClose: () => void
 }
 
-/** 判断事件目标是否落在 -webkit-app-region:drag 区域 */
-function isOnDragRegion(target: EventTarget | null): boolean {
-  let el = target as HTMLElement | null
-  while (el && el !== document.body) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const r = el.style.getPropertyValue('-webkit-app-region') || (el.style as any).WebkitAppRegion || ''
-    if (r === 'no-drag') return false
-    if (r === 'drag') return true
-    if (el.dataset.dragRegion === 'true') return true
-    el = el.parentElement
-  }
-  return false
-}
-
 export function CategoryPicker({
   x,
   y,
+  parentLeft,
   placement = 'top',
   categories,
   onSelect,
@@ -64,10 +54,10 @@ export function CategoryPicker({
       left = x - rect.width / 2
       top = y - rect.height - margin
     } else if (placement === 'submenu') {
-      // 优先向右展开紧贴父菜单，不够时向左
+      // 优先向右展开紧贴父菜单，不够时向左（子菜单右边对齐父菜单左边）
       left = x
       if (left + rect.width + margin > window.innerWidth) {
-        left = x - rect.width
+        left = (parentLeft ?? x) - rect.width
       }
       // 垂直：从行顶部向下，若超出底部则上移
       top = y
@@ -90,19 +80,21 @@ export function CategoryPicker({
 
   useEffect(() => {
     const onPointerDown = (e: MouseEvent): void => {
-      if (isOnDragRegion(e.target)) { onClose(); return }
       if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
+    const onWindowMove = (): void => onClose()
     document.addEventListener('mousedown', onPointerDown, true)
     document.addEventListener('contextmenu', onPointerDown, true)
     document.addEventListener('keydown', onKeyDown)
+    window.electron.ipcRenderer.on(IPC.WINDOW_MOVE, onWindowMove)
     return () => {
       document.removeEventListener('mousedown', onPointerDown, true)
       document.removeEventListener('contextmenu', onPointerDown, true)
       document.removeEventListener('keydown', onKeyDown)
+      window.electron.ipcRenderer.removeListener(IPC.WINDOW_MOVE, onWindowMove)
     }
   }, [onClose])
 

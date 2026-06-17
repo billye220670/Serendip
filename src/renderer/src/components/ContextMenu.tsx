@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
+import { IPC } from '../../../main/ipc/contract'
 
 export interface ContextMenuItem {
   key: string
@@ -23,21 +24,8 @@ export interface ContextMenuProps {
   items: ContextMenuItem[]
   onClose: () => void
   placement?: 'cursor' | 'top'
-}
-
-/** 判断事件目标是否落在标题栏拖拽区域（非 no-drag 子元素）。
- *  沿 DOM 向上走：遇到 no-drag 立即返回 false；遇到 data-drag-region 或 drag 返回 true。 */
-function isOnDragRegion(target: EventTarget | null): boolean {
-  let el = target as HTMLElement | null
-  while (el && el !== document.body) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const r = el.style.getPropertyValue('-webkit-app-region') || (el.style as any).WebkitAppRegion || ''
-    if (r === 'no-drag') return false
-    if (r === 'drag') return true
-    if (el.dataset.dragRegion === 'true') return true
-    el = el.parentElement
-  }
-  return false
+  /** hover 到非子菜单项时调用，用于关闭已展开的子面板 */
+  onSubmenuClose?: () => void
 }
 
 export function ContextMenu({
@@ -45,10 +33,19 @@ export function ContextMenu({
   y,
   items,
   onClose,
-  placement = 'cursor'
+  placement = 'cursor',
+  onSubmenuClose
 }: ContextMenuProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [position, setPosition] = useState<{ left: number; top: number }>({ left: x, top: y })
+
+  const cancelHover = useCallback(() => {
+    if (hoverTimer.current !== null) {
+      clearTimeout(hoverTimer.current)
+      hoverTimer.current = null
+    }
+  }, [])
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -75,8 +72,6 @@ export function ContextMenu({
 
   useEffect(() => {
     const onPointerDown = (e: MouseEvent): void => {
-      // 点击拖拽区域时关闭（用户按下标题栏准备拖动窗口）
-      if (isOnDragRegion(e.target)) { onClose(); return }
       if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -84,16 +79,19 @@ export function ContextMenu({
     }
     const onScroll = (): void => onClose()
     const onBlur = (): void => onClose()
+    const onWindowMove = (): void => onClose()
 
     document.addEventListener('mousedown', onPointerDown, true)
     document.addEventListener('contextmenu', onPointerDown, true)
     document.addEventListener('keydown', onKeyDown)
+    window.electron.ipcRenderer.on(IPC.WINDOW_MOVE, onWindowMove)
     window.addEventListener('scroll', onScroll, true)
     window.addEventListener('blur', onBlur)
     return () => {
       document.removeEventListener('mousedown', onPointerDown, true)
       document.removeEventListener('contextmenu', onPointerDown, true)
       document.removeEventListener('keydown', onKeyDown)
+      window.electron.ipcRenderer.removeListener(IPC.WINDOW_MOVE, onWindowMove)
       window.removeEventListener('scroll', onScroll, true)
       window.removeEventListener('blur', onBlur)
     }
@@ -127,8 +125,17 @@ export function ContextMenu({
             onMouseEnter={(e) => {
               if (hasSubmenu) {
                 const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                item.onSubmenuOpen!(rect)
+                cancelHover()
+                hoverTimer.current = setTimeout(() => {
+                  item.onSubmenuOpen!(rect)
+                }, 150)
+              } else {
+                cancelHover()
+                onSubmenuClose?.()
               }
+            }}
+            onMouseLeave={() => {
+              if (hasSubmenu) cancelHover()
             }}
             onClick={(e) => {
               e.stopPropagation()

@@ -19,6 +19,7 @@ interface MenuState {
 interface PickerState {
   x: number
   y: number
+  parentLeft: number
   item: MediaItem
 }
 
@@ -242,7 +243,7 @@ export function LikedView(): React.JSX.Element {
                 icon: FolderPlus,
                 submenuOpen: !!picker,
                 onSubmenuOpen: (rect: DOMRect) => {
-                  setPicker({ x: rect.right, y: rect.top, item: menu.item })
+                  setPicker({ x: rect.right, y: rect.top, parentLeft: rect.left, item: menu.item })
                 }
               }
             ] as ContextMenuItem[])
@@ -281,13 +282,14 @@ export function LikedView(): React.JSX.Element {
       )}
 
       {menu && (
-        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} onSubmenuClose={() => setPicker(null)} />
       )}
 
       {picker && (
         <CategoryPicker
           x={picker.x}
           y={picker.y}
+          parentLeft={picker.parentLeft}
           placement="submenu"
           categories={categories}
           onSelect={(id) => void handleAddToCategory(picker.item, id)}

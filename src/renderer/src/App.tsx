@@ -754,21 +754,24 @@ function SettingsPopover({
     const r = btnRef.current?.getBoundingClientRect()
     if (r) setAnchor({ top: r.bottom + 6, right: window.innerWidth - r.right })
 
-    // 点外关闭
+    // 点外关闭（含标题栏拖拽区域）
     const onDown = (e: MouseEvent): void => {
       const t = e.target as Node
       if (panelRef.current?.contains(t)) return
       if (btnRef.current?.contains(t)) return
       setOpen(false)
     }
+    const onWindowMove = (): void => setOpen(false)
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') setOpen(false)
     }
     window.addEventListener('mousedown', onDown)
     window.addEventListener('keydown', onKey)
+    window.electron.ipcRenderer.on(IPC.WINDOW_MOVE, onWindowMove)
     return () => {
       window.removeEventListener('mousedown', onDown)
       window.removeEventListener('keydown', onKey)
+      window.electron.ipcRenderer.removeListener(IPC.WINDOW_MOVE, onWindowMove)
     }
   }, [open])
 
@@ -796,7 +799,7 @@ function SettingsPopover({
             className="fixed z-[150] rounded-xl border border-border bg-glass backdrop-blur-xl shadow-lg shadow-black/20 p-4 flex flex-col gap-3"
             style={{ top: anchor.top, right: anchor.right }}
           >
-            {showGridSize && (
+          {showGridSize && (
               <div className="flex items-center gap-4">
                 <span className="text-xs text-muted-foreground flex-1">缩略图</span>
                 <button
