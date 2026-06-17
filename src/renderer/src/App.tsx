@@ -565,8 +565,9 @@ function App(): React.JSX.Element {
           >
             <ScrollContainerContext.Provider value={mainEl}>
               {/* min-h-full 让 EmptyState / ScanProgressPanel 用 h-full 仍能居中
-                  （main 是 overflow-y:auto，子节点默认按内容撑高，没有 flex 基线） */}
-              <div className="min-h-full">
+                  （main 是 overflow-y:auto，子节点默认按内容撑高，没有 flex 基线）
+                  评审模式改为 h-full：ReviewView 依赖 h-full 让绝对定位层正确撑开 */}
+              <div className={view.kind === 'review' ? 'h-full' : 'min-h-full'}>
                 {isScanning ? (
                   <ScanProgressPanel progress={scanProgress} />
                 ) : !rootPath ? (
