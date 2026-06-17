@@ -168,7 +168,6 @@ function App(): React.JSX.Element {
   // 主区滚动容器 —— MasonryGrid 通过 ScrollContainerProvider 拿到 element 本身，
   // 用容器的 scrollTop / clientHeight 替代默认的 window 滚动模型。
   // 用 state（不是 ref）：ref.current 变化不触发 re-render，孩子拿不到 element ready 的信号
-  const [mainEl, setMainEl] = useState<HTMLElement | null>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
 
   useEffect(() => {
@@ -552,37 +551,43 @@ function App(): React.JSX.Element {
             </nav>
           </aside>
 
-          {/* 右侧主区域：独立滚动容器。MasonryGrid 通过 ScrollContainerProvider 拿到此 ref，
-              把 masonic 的滚动监听从 window 切到这里。
+          {/* 右侧主区域：不再自己滚动，改为容纳多个独立滚动的视图层。
               relative 让内部 offsetParent 链停在这里，便于 MasonryGrid 计算 grid 在
               本容器内的 offsetTop（瀑布流 padding 等需要从 scrollTop 中扣掉） */}
           <main
-            ref={setMainEl}
             className={clsx(
-              'flex-1 min-w-0 overflow-y-auto overflow-x-clip relative',
+              'flex-1 min-w-0 overflow-hidden relative',
               theme === 'light' ? 'bg-[#dbd8d6]' : 'bg-background'
             )}
           >
-            <ScrollContainerContext.Provider value={mainEl}>
-              {/* min-h-full 让 EmptyState / ScanProgressPanel 用 h-full 仍能居中
-                  （main 是 overflow-y:auto，子节点默认按内容撑高，没有 flex 基线）
-                  评审模式改为 h-full：ReviewView 依赖 h-full 让绝对定位层正确撑开 */}
-              <div className={view.kind === 'review' ? 'h-full' : 'min-h-full'}>
-                {isScanning ? (
-                  <ScanProgressPanel progress={scanProgress} />
-                ) : !rootPath ? (
-                  <EmptyState onSelect={handleSelectRoot} />
-                ) : view.kind === 'review' ? (
-                  <ReviewView />
-                ) : view.kind === 'liked' ? (
-                  <LikedView />
-                ) : view.kind === 'category' ? (
-                  <CategoryView key={view.id} categoryId={view.id} />
-                ) : (
+            {/* ExploreView 常驻挂载，切走时用 hidden 隐藏而非销毁，
+                保留已加载的图片列表与滚动进度；独立滚动容器让滚动位置天然保留 */}
+            {rootPath && !isScanning && (
+              <ExploreScrollContainer active={view.kind === 'explore'}>
+                <div className="min-h-full">
                   <ExploreView />
-                )}
-              </div>
-            </ScrollContainerContext.Provider>
+                </div>
+              </ExploreScrollContainer>
+            )}
+
+            {/* 其他视图：条件渲染，各自独立滚动 */}
+            {(view.kind !== 'explore' || !rootPath || isScanning) && (
+              <OtherViewScrollContainer>
+                <div className={view.kind === 'review' ? 'h-full' : 'min-h-full'}>
+                  {isScanning ? (
+                    <ScanProgressPanel progress={scanProgress} />
+                  ) : !rootPath ? (
+                    <EmptyState onSelect={handleSelectRoot} />
+                  ) : view.kind === 'review' ? (
+                    <ReviewView />
+                  ) : view.kind === 'liked' ? (
+                    <LikedView />
+                  ) : view.kind === 'category' ? (
+                    <CategoryView key={view.id} categoryId={view.id} />
+                  ) : null}
+                </div>
+              </OtherViewScrollContainer>
+            )}
           </main>
         </div>
       </div>
@@ -958,6 +963,49 @@ function NavItem({
         </div>,
         document.body
       )}
+    </div>
+  )
+}
+
+/** ExploreView 的独立滚动容器 — 切走时 hidden 但保留滚动位置 */
+function ExploreScrollContainer({
+  active,
+  children
+}: {
+  active: boolean
+  children: React.ReactNode
+}): React.JSX.Element {
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
+  return (
+    <div
+      ref={setScrollEl}
+      className={clsx(
+        'absolute inset-0 overflow-y-auto overflow-x-clip',
+        active ? 'block' : 'hidden'
+      )}
+    >
+      <ScrollContainerContext.Provider value={scrollEl}>
+        {children}
+      </ScrollContainerContext.Provider>
+    </div>
+  )
+}
+
+/** 其他视图的独立滚动容器（条件渲染，每次重置滚动位置） */
+function OtherViewScrollContainer({
+  children
+}: {
+  children: React.ReactNode
+}): React.JSX.Element {
+  const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null)
+  return (
+    <div
+      ref={setScrollEl}
+      className="absolute inset-0 overflow-y-auto overflow-x-clip"
+    >
+      <ScrollContainerContext.Provider value={scrollEl}>
+        {children}
+      </ScrollContainerContext.Provider>
     </div>
   )
 }

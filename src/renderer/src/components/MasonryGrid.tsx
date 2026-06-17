@@ -102,7 +102,8 @@ export function MasonryGrid({
 
   const readGeometry = useCallback(() => {
     const grid = containerRef.current
-    if (!grid) return
+    // offsetWidth=0 说明容器被 hidden 隐藏，跳过更新以保留上次有效布局
+    if (!grid || grid.offsetWidth === 0) return
     setContainerWidth(grid.offsetWidth)
     // grid.offsetTop = 距最近 positioned 祖先的偏移。App 的 <main> 是 position:relative，
     // 也是 scrollEl，所以 offsetTop 就是 grid 在滚动容器内的位置 —— 直接用即可
