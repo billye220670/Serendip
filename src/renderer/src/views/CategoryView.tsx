@@ -207,8 +207,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
       if (!canvas) return
       deselectAll()
       try {
-        const inputs = ids.map((fileId) => ({ fileId, x: 0, y: 0, w: 240, h: 180, z: 0 }))
-        await addItemsToCanvas(canvasId, inputs)
+        await addItemsToCanvas(canvasId, ids)
         pushCanvasToast(canvasId, canvas.name, ids.length)
       } catch (err) {
         console.error('batchAddToCanvas failed:', err)
@@ -225,8 +224,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
       try {
         const canvasId = await window.api.createCanvas(name)
         await useCanvasesStore.getState().load()
-        const inputs = ids.map((fileId) => ({ fileId, x: 0, y: 0, w: 240, h: 180, z: 0 }))
-        await addItemsToCanvas(canvasId, inputs)
+        await addItemsToCanvas(canvasId, ids)
         pushCanvasToast(canvasId, name, ids.length)
       } catch (err) {
         console.error('batchCreateAndAddToCanvas failed:', err)

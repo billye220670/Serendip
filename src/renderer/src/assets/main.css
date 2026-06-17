@@ -27,6 +27,7 @@
   --color-sidebar-hover: rgba(0, 0, 0, 0.09);
   --color-card-shadow: rgba(0, 0, 0, 0.06);
   --color-glass: rgba(255, 255, 255, 0.78);
+  --color-canvas: #f0ede8;
 }
 
 :root[data-theme='dark'] {
@@ -43,6 +44,7 @@
   --color-sidebar-hover: rgba(255, 255, 255, 0.09);
   --color-card-shadow: rgba(0, 0, 0, 0.4);
   --color-glass: rgba(0, 0, 0, 0.55);
+  --color-canvas: #141210;
 }
 
 /* 默认亮色 */
@@ -140,6 +142,12 @@ body {
 }
 .card-enter {
   animation: card-enter 0.32s ease-out both;
+}
+
+/* 画布全图层淡入 */
+@keyframes canvas-fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 /* 评审标题确认反馈：punch + fade out */

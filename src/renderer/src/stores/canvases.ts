@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { Canvas } from '../../../main/canvases'
-import type { CanvasItemInput } from '../../../main/canvases'
+import { useCanvasItemsStore } from './canvasItems'
+import { computeWaterfallPositions } from '../lib/canvasMath'
 
 interface CanvasesState {
   canvases: Canvas[]
@@ -11,7 +12,8 @@ interface CanvasesState {
   rename: (id: number, newName: string) => Promise<void>
   remove: (id: number) => Promise<void>
   reorder: (orderedIds: number[]) => Promise<void>
-  addItems: (canvasId: number, items: CanvasItemInput[]) => Promise<number[]>
+  /** 把 fileIds 加入画布，自动计算瀑布式布局位置，返回新 canvas_item id 列表 */
+  addItems: (canvasId: number, fileIds: number[]) => Promise<number[]>
   removeItems: (canvasId: number, itemIds: number[]) => Promise<void>
 }
 
@@ -53,14 +55,21 @@ export const useCanvasesStore = create<CanvasesState>((set, get) => ({
     await window.api.reorderCanvases(orderedIds)
   },
 
-  addItems: async (canvasId: number, items: CanvasItemInput[]) => {
-    const newIds = await window.api.addItemsToCanvas(canvasId, items)
+  addItems: async (canvasId: number, fileIds: number[]) => {
+    if (fileIds.length === 0) return []
+    // 每次从 DB 拿最新元素，避免连续调用时因 bump() 异步而读到旧 state
+    const existing = await window.api.getCanvasItems(canvasId)
+    const inputs = computeWaterfallPositions(fileIds, existing)
+
+    const newIds = await window.api.addItemsToCanvas(canvasId, inputs)
     if (newIds.length > 0) {
       set((s) => ({
         canvases: s.canvases.map((c) =>
           c.id === canvasId ? { ...c, itemCount: c.itemCount + newIds.length } : c
         )
       }))
+      const itemsStore = useCanvasItemsStore.getState()
+      if (itemsStore.canvasId === canvasId) itemsStore.bump()
     }
     return newIds
   },
@@ -75,5 +84,7 @@ export const useCanvasesStore = create<CanvasesState>((set, get) => ({
           : c
       )
     }))
+    const itemsStore = useCanvasItemsStore.getState()
+    if (itemsStore.canvasId === canvasId) itemsStore.bump()
   }
 }))

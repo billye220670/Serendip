@@ -20,6 +20,7 @@ export default {
         glass: 'var(--color-glass)',
         sidebar: 'var(--color-sidebar)',
         'sidebar-hover': 'var(--color-sidebar-hover)',
+        canvas: 'var(--color-canvas)',
       },
     },
   },

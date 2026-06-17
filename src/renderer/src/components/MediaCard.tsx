@@ -297,7 +297,7 @@ function MediaCardImpl({
           const id = await window.api.createCanvas(finalName)
           await useCanvasesStore.getState().load()
           setCurrentCanvas(id)
-          await addItemsToCanvas(id, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+          await addItemsToCanvas(id, [item.id])
           pushCanvasToast(id, finalName, 1)
         } catch (err) {
           console.error('Failed to auto-create canvas:', err)
@@ -308,7 +308,7 @@ function MediaCardImpl({
       // 有当前画布：直接加
       const canvas = canvases.find((c) => c.id === currentCanvasId)
       if (!canvas) return
-      await addItemsToCanvas(currentCanvasId, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      await addItemsToCanvas(currentCanvasId, [item.id])
       pushCanvasToast(currentCanvasId, canvas.name, 1)
     },
     [currentCanvasId, canvases, addItemsToCanvas, setCurrentCanvas, item.id]
@@ -328,7 +328,7 @@ function MediaCardImpl({
       setCanvasPicker(null)
       const canvas = canvases.find((c) => c.id === canvasId)
       if (!canvas) return
-      await addItemsToCanvas(canvasId, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      await addItemsToCanvas(canvasId, [item.id])
       pushCanvasToast(canvasId, canvas.name, 1)
     },
     [canvases, addItemsToCanvas, item.id]
@@ -340,7 +340,7 @@ function MediaCardImpl({
       try {
         const id = await window.api.createCanvas(name)
         await useCanvasesStore.getState().load()
-        await addItemsToCanvas(id, [{ fileId: item.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+        await addItemsToCanvas(id, [item.id])
         pushCanvasToast(id, name, 1)
       } catch (err) {
         console.error('createCanvas failed:', err)

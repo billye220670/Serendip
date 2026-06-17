@@ -27,7 +27,7 @@ import { ExploreView } from './views/Explore'
 import { CategoryView } from './views/CategoryView'
 import { ReviewView } from './views/Review'
 import { LikedView } from './views/LikedView'
-import { CanvasView } from './views/CanvasView'
+import { CanvasView } from './views/canvas/CanvasView'
 import { DetailView } from './views/Detail'
 import { CategoryList } from './components/CategoryList'
 import { CurrentCanvasChip } from './components/CurrentCanvasChip'
@@ -342,17 +342,8 @@ function App(): React.JSX.Element {
         const targetCanvas = canvases.find((c) => c.id === targetCanvasId)
         if (!targetCanvas) return
 
-        // 简单瀑布式初始布局（阶段 1）
-        const items = fileIds.map((fid, i) => ({
-          fileId: fid,
-          x: 0,
-          y: i * 252,
-          w: 240,
-          h: 180,
-          z: 0
-        }))
         try {
-          await addItemsToCanvas(targetCanvasId, items)
+          await addItemsToCanvas(targetCanvasId, fileIds)
           pushCanvasToast(targetCanvasId, targetCanvas.name, fileIds.length)
           if (fileIds.length > 1) useSelectionStore.getState().deselectAll()
         } catch (err) {
@@ -706,6 +697,7 @@ function App(): React.JSX.Element {
                   try {
                     const id = await createCanvas(name)
                     setCurrentCanvas(id)
+                    if (view.kind === 'canvas') setView({ kind: 'canvas', id })
                     return
                   } catch (err) {
                     return err instanceof Error ? err.message : String(err)
@@ -713,6 +705,7 @@ function App(): React.JSX.Element {
                 }}
                 onSelect={(id) => {
                   setCurrentCanvas(id)
+                  if (view.kind === 'canvas') setView({ kind: 'canvas', id })
                 }}
                 onRename={(c) => setRenameCanvasTarget(c)}
                 onDelete={(c) => setDeleteCanvasTarget(c)}

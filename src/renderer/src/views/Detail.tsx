@@ -148,7 +148,7 @@ export function DetailView(): React.JSX.Element | null {
           const id = await window.api.createCanvas(finalName)
           await useCanvasesStore.getState().load()
           setCurrentCanvas(id)
-          await addItemsToCanvas(id, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+          await addItemsToCanvas(id, [currentItem.id])
           pushCanvasToast(id, finalName, 1)
         } catch (err) {
           console.error('Failed to auto-create canvas:', err)
@@ -157,7 +157,7 @@ export function DetailView(): React.JSX.Element | null {
       }
       const canvas = canvases.find((c) => c.id === currentCanvasId)
       if (!canvas) return
-      await addItemsToCanvas(currentCanvasId, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      await addItemsToCanvas(currentCanvasId, [currentItem.id])
       pushCanvasToast(currentCanvasId, canvas.name, 1)
     },
     [currentItem, currentCanvasId, canvases, addItemsToCanvas, setCurrentCanvas]
@@ -178,7 +178,7 @@ export function DetailView(): React.JSX.Element | null {
       setCanvasPicker(null)
       const canvas = canvases.find((c) => c.id === canvasId)
       if (!canvas) return
-      await addItemsToCanvas(canvasId, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+      await addItemsToCanvas(canvasId, [currentItem.id])
       pushCanvasToast(canvasId, canvas.name, 1)
     },
     [currentItem, canvases, addItemsToCanvas]
@@ -192,7 +192,7 @@ export function DetailView(): React.JSX.Element | null {
         const id = await window.api.createCanvas(name)
         await useCanvasesStore.getState().load()
         setCurrentCanvas(id)
-        await addItemsToCanvas(id, [{ fileId: currentItem.id, x: 0, y: 0, w: 240, h: 180, z: 0 }])
+        await addItemsToCanvas(id, [currentItem.id])
         pushCanvasToast(id, name, 1)
       } catch (err) {
         console.error('createCanvas failed:', err)
