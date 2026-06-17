@@ -1,42 +1,45 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { ChevronRight } from 'lucide-react'
 import clsx from 'clsx'
 
 export interface ContextMenuItem {
   key: string
-  /** 分隔线项 — 设为 true 时其它字段忽略 */
   divider?: boolean
-  /** 分组标题（不可点击的灰色小标） */
   header?: boolean
   label?: string
   icon?: React.ElementType
-  /** 危险操作（红色文字），如"不感兴趣" */
   danger?: boolean
   onClick?: () => void
+  /** hover 时在右侧展开子面板；传入菜单行自身的 DOMRect 作锚点 */
+  onSubmenuOpen?: (rect: DOMRect) => void
+  /** 子面板已打开时为 true（控制高亮状态） */
+  submenuOpen?: boolean
 }
 
 export interface ContextMenuProps {
-  /** 触发位置（鼠标坐标，或 placement='top' 时的锚点上沿中心） */
   x: number
   y: number
   items: ContextMenuItem[]
   onClose: () => void
-  /**
-   * 弹出方位：
-   * - 'cursor'（默认）：左上角锚定到 (x,y)，溢出时翻转
-   * - 'top'：在 (x,y) 上方居中浮出（用于底部工具条的"加入分类"等）
-   */
   placement?: 'cursor' | 'top'
 }
 
-/**
- * 浮动右键菜单。
- *
- * 行为：
- * - 点击菜单项后自动关闭
- * - 点击菜单外、按 Esc、滚动、窗口失焦都会关闭
- * - 自动避开屏幕右/下边界
- */
+/** 判断事件目标是否落在标题栏拖拽区域（非 no-drag 子元素）。
+ *  沿 DOM 向上走：遇到 no-drag 立即返回 false；遇到 data-drag-region 或 drag 返回 true。 */
+function isOnDragRegion(target: EventTarget | null): boolean {
+  let el = target as HTMLElement | null
+  while (el && el !== document.body) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r = el.style.getPropertyValue('-webkit-app-region') || (el.style as any).WebkitAppRegion || ''
+    if (r === 'no-drag') return false
+    if (r === 'drag') return true
+    if (el.dataset.dragRegion === 'true') return true
+    el = el.parentElement
+  }
+  return false
+}
+
 export function ContextMenu({
   x,
   y,
@@ -45,12 +48,8 @@ export function ContextMenu({
   placement = 'cursor'
 }: ContextMenuProps): React.JSX.Element {
   const ref = useRef<HTMLDivElement | null>(null)
-  const [position, setPosition] = useState<{ left: number; top: number }>({
-    left: x,
-    top: y
-  })
+  const [position, setPosition] = useState<{ left: number; top: number }>({ left: x, top: y })
 
-  // 在 layout 阶段测量后调整位置，避开屏幕边缘
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
@@ -59,7 +58,6 @@ export function ContextMenu({
     let left: number
     let top: number
     if (placement === 'top') {
-      // 在锚点上方居中浮出
       left = x - rect.width / 2
       top = y - rect.height - margin
     } else {
@@ -69,21 +67,17 @@ export function ContextMenu({
         top = Math.max(margin, window.innerHeight - rect.height - margin)
       }
     }
-    // 水平 / 顶部边界夹紧
-    if (left + rect.width + margin > window.innerWidth) {
-      left = window.innerWidth - rect.width - margin
-    }
+    if (left + rect.width + margin > window.innerWidth) left = window.innerWidth - rect.width - margin
     if (left < margin) left = margin
     if (top < margin) top = margin
     setPosition({ left, top })
   }, [x, y, placement])
 
-  // 关闭事件：外部点击 / Esc / 滚动 / 窗口失焦
   useEffect(() => {
     const onPointerDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        onClose()
-      }
+      // 点击拖拽区域时关闭（用户按下标题栏准备拖动窗口）
+      if (isOnDragRegion(e.target)) { onClose(); return }
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
     }
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
@@ -91,7 +85,6 @@ export function ContextMenu({
     const onScroll = (): void => onClose()
     const onBlur = (): void => onClose()
 
-    // 用 capture 确保比 React onClick 先收到，避免菜单项点完又被外部点击关闭重复 onClose
     document.addEventListener('mousedown', onPointerDown, true)
     document.addEventListener('contextmenu', onPointerDown, true)
     document.addEventListener('keydown', onKeyDown)
@@ -116,43 +109,46 @@ export function ContextMenu({
     >
       {items.map((item) => {
         if (item.divider) {
-          return (
-            <div
-              key={item.key}
-              role="separator"
-              className="my-1 mx-2 h-px bg-border"
-            />
-          )
+          return <div key={item.key} role="separator" className="my-1 mx-2 h-px bg-border" />
         }
         if (item.header) {
           return (
-            <div
-              key={item.key}
-              className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
-            >
+            <div key={item.key} className="px-3 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               {item.label}
             </div>
           )
         }
         const Icon = item.icon
+        const hasSubmenu = !!item.onSubmenuOpen
         return (
           <button
             key={item.key}
             role="menuitem"
+            onMouseEnter={(e) => {
+              if (hasSubmenu) {
+                const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                item.onSubmenuOpen!(rect)
+              }
+            }}
             onClick={(e) => {
               e.stopPropagation()
-              item.onClick?.()
-              onClose()
+              if (!hasSubmenu) {
+                item.onClick?.()
+                onClose()
+              }
             }}
             className={clsx(
               'w-full flex items-center gap-2.5 px-3 py-1.5 text-sm text-left transition-colors',
               item.danger
                 ? 'text-red-500 hover:bg-red-500/10'
-                : 'text-foreground hover:bg-muted'
+                : 'text-foreground hover:bg-muted',
+              // 子面板已打开时保持高亮
+              item.submenuOpen && !item.danger && 'bg-muted'
             )}
           >
             {Icon && <Icon className="w-4 h-4 flex-shrink-0" />}
             <span className="flex-1 truncate">{item.label}</span>
+            {hasSubmenu && <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 text-muted-foreground" />}
           </button>
         )
       })}

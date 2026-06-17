@@ -61,6 +61,9 @@ function createWindow(): void {
   mainWindow.on('leave-full-screen', () => {
     mainWindow.webContents.send(IPC.FULLSCREEN_CHANGE, false)
   })
+  mainWindow.on('move', () => {
+    mainWindow.webContents.send(IPC.WINDOW_MOVE)
+  })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

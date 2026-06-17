@@ -46,7 +46,8 @@ import {
   FolderOpen,
   ChevronLeft,
   ChevronRight,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Pencil
 } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../main/categories'
@@ -389,50 +390,88 @@ function App(): React.JSX.Element {
             - 内部按钮 / 输入需 no-drag 才可点
             - 不再 sticky —— 主区独立滚动，顶栏天然就是不滚的兄弟节点 */}
         <header
+          data-drag-region="true"
           className="h-16 flex-shrink-0 z-20 flex items-stretch border-b border-border"
           style={{ ...DRAGGABLE, backgroundColor: theme === 'dark' ? '#111009' : '#f5f4f1' }}
         >
-          {/* 左：根目录、扫描、评审进度等业务态，贴左 */}
+          {/* 左：根目录 / 分类名称区，贴左 */}
           <div className="flex-1 min-w-0 flex items-center px-4 gap-3">
-            <button
-              onClick={handleSelectRoot}
-              disabled={isScanning}
-              className="p-2 hover:opacity-60 transition-opacity disabled:opacity-30 flex-shrink-0"
-              title={rootPath ? '更换根目录' : '选择根目录'}
-              style={NOT_DRAGGABLE}
-            >
-              <FolderOpen className="w-5 h-5" />
-            </button>
-            {rootPath && (
+            {view.kind === 'category' ? (
+              /* 分类视图：显示分类名 + 重命名按钮 */
               <>
-                <div
-                  className="text-sm text-muted-foreground truncate max-w-md"
-                  style={NOT_DRAGGABLE}
-                >
-                  {rootPath}
-                </div>
-                <button
-                  onClick={handleRescan}
-                  disabled={isScanning}
-                  className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
-                  title="重新扫描"
-                  style={NOT_DRAGGABLE}
-                >
-                  <RefreshCw
-                    className={clsx('w-4 h-4', isScanning && 'animate-spin')}
-                  />
-                </button>
+                {(() => {
+                  const cat = categories.find((c) => c.id === view.id)
+                  return (
+                    <>
+                      <span
+                        className="text-sm font-semibold truncate max-w-md"
+                        style={NOT_DRAGGABLE}
+                      >
+                        {cat?.name ?? '分类'}
+                      </span>
+                      <button
+                        onClick={() => {
+                          const cat = categories.find((c) => c.id === view.id)
+                          if (cat) setRenameTarget(cat)
+                        }}
+                        className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+                        title="重命名分类"
+                        style={NOT_DRAGGABLE}
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      {cat && (
+                        <span className="text-xs text-muted-foreground" style={NOT_DRAGGABLE}>
+                          {cat.itemCount.toLocaleString()} 项
+                        </span>
+                      )}
+                    </>
+                  )
+                })()}
               </>
-            )}
-
-            {/* 评审进度 — 仅评审模式显示，靠中后部 */}
-            {view.kind === 'review' && reviewProgress && (
-              <span className="ml-auto text-sm text-muted-foreground flex-shrink-0">
-                {reviewProgress.reviewed > 0
-                  ? `已评审 ${reviewProgress.reviewed} 张`
-                  : '开始评审'}
-                {reviewProgress.pending > 0 && ` · 还有约 ${reviewProgress.pending} 张`}
-              </span>
+            ) : (
+              /* 其他视图：选择根目录、路径、重新扫描 */
+              <>
+                <button
+                  onClick={handleSelectRoot}
+                  disabled={isScanning}
+                  className="p-2 hover:opacity-60 transition-opacity disabled:opacity-30 flex-shrink-0"
+                  title={rootPath ? '更换根目录' : '选择根目录'}
+                  style={NOT_DRAGGABLE}
+                >
+                  <FolderOpen className="w-5 h-5" />
+                </button>
+                {rootPath && (
+                  <>
+                    <div
+                      className="text-sm text-muted-foreground truncate max-w-md"
+                      style={NOT_DRAGGABLE}
+                    >
+                      {rootPath}
+                    </div>
+                    <button
+                      onClick={handleRescan}
+                      disabled={isScanning}
+                      className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
+                      title="重新扫描"
+                      style={NOT_DRAGGABLE}
+                    >
+                      <RefreshCw
+                        className={clsx('w-4 h-4', isScanning && 'animate-spin')}
+                      />
+                    </button>
+                  </>
+                )}
+                {/* 评审进度 */}
+                {view.kind === 'review' && reviewProgress && (
+                  <span className="ml-auto text-sm text-muted-foreground flex-shrink-0">
+                    {reviewProgress.reviewed > 0
+                      ? `已评审 ${reviewProgress.reviewed} 张`
+                      : '开始评审'}
+                    {reviewProgress.pending > 0 && ` · 还有约 ${reviewProgress.pending} 张`}
+                  </span>
+                )}
+              </>
             )}
           </div>
 

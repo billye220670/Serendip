@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
-import { Loader2, FolderOpen, HeartOff, Folder } from 'lucide-react'
+import { Loader2, FolderOpen, ExternalLink, HeartOff, FolderPlus } from 'lucide-react'
 import { MasonryGrid } from '../components/MasonryGrid'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
+import { CategoryPicker } from '../components/CategoryPicker'
 import { SelectionToolbar } from '../components/SelectionToolbar'
 import { useCategoriesStore } from '../stores/categories'
 import { useLibraryStore } from '../stores/library'
@@ -10,6 +11,12 @@ import { useDetailStore } from '../stores/detail'
 import type { MediaItem } from '../../../main/recommender'
 
 interface MenuState {
+  x: number
+  y: number
+  item: MediaItem
+}
+
+interface PickerState {
   x: number
   y: number
   item: MediaItem
@@ -26,6 +33,7 @@ interface MenuState {
  */
 export function LikedView(): React.JSX.Element {
   const categories = useCategoriesStore((s) => s.categories)
+  const createCategory = useCategoriesStore((s) => s.create)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const view = useLibraryStore((s) => s.view)
   const loadStats = useLibraryStore((s) => s.loadStats)
@@ -34,6 +42,7 @@ export function LikedView(): React.JSX.Element {
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(true)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [picker, setPicker] = useState<PickerState | null>(null)
 
   // 多选
   const {
@@ -104,6 +113,14 @@ export function LikedView(): React.JSX.Element {
     }
   }, [])
 
+  const handleOpenFile = useCallback(async (item: MediaItem) => {
+    try {
+      await window.api.openFile(item.id)
+    } catch (err) {
+      console.error('openFile failed:', err)
+    }
+  }, [])
+
   const handleAddToCategory = useCallback(
     async (item: MediaItem, categoryId: number) => {
       try {
@@ -115,6 +132,18 @@ export function LikedView(): React.JSX.Element {
     [addItemsToCategory]
   )
 
+  const handleCreateAndAddToCategory = useCallback(
+    async (item: MediaItem, name: string) => {
+      try {
+        const id = await createCategory(name)
+        await addItemsToCategory(id, [item.id])
+      } catch (err) {
+        console.error('createAndAddToCategory failed:', err)
+      }
+    },
+    [createCategory, addItemsToCategory]
+  )
+
   const handleThumbError = useCallback(async (item: MediaItem) => {
     setItems((prev) => prev.filter((it) => it.id !== item.id))
     try {
@@ -124,12 +153,19 @@ export function LikedView(): React.JSX.Element {
     }
   }, [])
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, item: MediaItem) => {
-    e.preventDefault()
-    setMenu({ x: e.clientX, y: e.clientY, item })
-  }, [])
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, item: MediaItem) => {
+      if (selectionActive) return
+      e.preventDefault()
+      setMenu({ x: e.clientX, y: e.clientY, item })
+    },
+    [selectionActive]
+  )
 
-  const closeMenu = useCallback(() => setMenu(null), [])
+  const closeMenu = useCallback(() => {
+    setMenu(null)
+    setPicker(null)
+  }, [])
 
   // ===== 批量操作 =====
 
@@ -162,6 +198,21 @@ export function LikedView(): React.JSX.Element {
     [getSelectedIds, deselectAll, addItemsToCategory]
   )
 
+  const handleBatchCreateAndAddToCategory = useCallback(
+    async (name: string) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      deselectAll()
+      try {
+        const id = await createCategory(name)
+        await addItemsToCategory(id, ids)
+      } catch (err) {
+        console.error('batchCreateAndAdd failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, createCategory, addItemsToCategory]
+  )
+
   const menuItems: ContextMenuItem[] = menu
     ? [
         {
@@ -171,22 +222,29 @@ export function LikedView(): React.JSX.Element {
           onClick: () => void performUnlike(menu.item.id)
         },
         {
+          key: 'open',
+          label: '使用默认应用打开',
+          icon: ExternalLink,
+          onClick: () => void handleOpenFile(menu.item)
+        },
+        {
           key: 'reveal',
           label: '在文件管理器中显示',
           icon: FolderOpen,
           onClick: () => void handleReveal(menu.item)
         },
-        // 加入分类（仅有分类时显示）
         ...(categories.length > 0
           ? ([
               { key: 'div-cat', divider: true },
-              { key: 'h-cat', header: true, label: '添加到分类' },
-              ...categories.map<ContextMenuItem>((c) => ({
-                key: `cat-${c.id}`,
-                label: c.name,
-                icon: Folder,
-                onClick: () => void handleAddToCategory(menu.item, c.id)
-              }))
+              {
+                key: 'add-to-cat',
+                label: '添加到分类',
+                icon: FolderPlus,
+                submenuOpen: !!picker,
+                onSubmenuOpen: (rect: DOMRect) => {
+                  setPicker({ x: rect.right, y: rect.top, item: menu.item })
+                }
+              }
             ] as ContextMenuItem[])
           : [])
       ]
@@ -226,6 +284,18 @@ export function LikedView(): React.JSX.Element {
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
       )}
 
+      {picker && (
+        <CategoryPicker
+          x={picker.x}
+          y={picker.y}
+          placement="submenu"
+          categories={categories}
+          onSelect={(id) => void handleAddToCategory(picker.item, id)}
+          onCreateAndSelect={(name) => void handleCreateAndAddToCategory(picker.item, name)}
+          onClose={() => setPicker(null)}
+        />
+      )}
+
       <SelectionToolbar
         active={selectionActive}
         count={selectedCount}
@@ -236,6 +306,7 @@ export function LikedView(): React.JSX.Element {
         categories={categories}
         onUnlike={handleBatchUnlike}
         onAddToCategory={handleBatchAddToCategory}
+        onCreateAndAddToCategory={handleBatchCreateAndAddToCategory}
       />
     </div>
   )

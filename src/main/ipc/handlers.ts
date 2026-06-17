@@ -151,6 +151,16 @@ export function registerIpcHandlers(): void {
     shell.showItemInFolder(row.path)
   })
 
+  // 用系统默认应用打开文件
+  ipcMain.handle(IPC.OPEN_FILE, (_event, fileId: number) => {
+    const db = getDatabase()
+    const row = db.prepare('SELECT path FROM media_files WHERE id = ?').get(fileId) as
+      | { path: string }
+      | undefined
+    if (!row) return
+    void shell.openPath(row.path)
+  })
+
   ipcMain.handle(IPC.OPEN_FOLDER, (_event, folderPath: string) => {
     void shell.openPath(folderPath)
   })

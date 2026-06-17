@@ -27,6 +27,7 @@ const api: SerendipAPI = {
   markUnavailable: (fileId: number, reason: string) =>
     ipcRenderer.invoke(IPC.MARK_UNAVAILABLE, fileId, reason),
   revealInFolder: (fileId: number) => ipcRenderer.invoke(IPC.REVEAL_IN_FOLDER, fileId),
+  openFile: (fileId: number) => ipcRenderer.invoke(IPC.OPEN_FILE, fileId),
   openFolder: (folderPath: string) => ipcRenderer.invoke(IPC.OPEN_FOLDER, folderPath),
 
   listCategories: () => ipcRenderer.invoke(IPC.LIST_CATEGORIES),

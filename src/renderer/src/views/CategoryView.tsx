@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { Loader2, FolderOpen, Heart, HeartOff, Trash2 } from 'lucide-react'
+import { Loader2, FolderOpen, ExternalLink, Heart, HeartOff, Trash2, FolderPlus } from 'lucide-react'
 import { MasonryGrid } from '../components/MasonryGrid'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
+import { CategoryPicker } from '../components/CategoryPicker'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { SelectionToolbar } from '../components/SelectionToolbar'
 import { useCategoriesStore } from '../stores/categories'
@@ -16,20 +17,19 @@ interface MenuState {
   item: MediaItem
 }
 
+interface PickerState {
+  x: number
+  y: number
+  item: MediaItem
+}
+
 interface Props {
   categoryId: number
 }
 
-/**
- * 分类视图 — 复用瀑布流，数据来自 getCategoryItems。
- *
- * 与探索视图的区别：
- * - 不分页（一次拉全），分类规模通常远小于全库
- * - 右键菜单只提供"喜欢/取消喜欢"、"在文件管理器中显示"、"从分类移除"
- * - "从分类移除"需要二次确认，避免误操作
- */
 export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const categories = useCategoriesStore((s) => s.categories)
+  const createCategory = useCategoriesStore((s) => s.create)
   const removeItem = useCategoriesStore((s) => s.removeItem)
   const removeItems = useCategoriesStore((s) => s.removeItems)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
@@ -45,10 +45,10 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(true)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [picker, setPicker] = useState<PickerState | null>(null)
   const [confirmRemove, setConfirmRemove] = useState<MediaItem | null>(null)
   const [confirmBatchRemove, setConfirmBatchRemove] = useState(false)
 
-  // 多选（阶段 5）
   const {
     selectedCount,
     selectionActive,
@@ -60,7 +60,6 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     clear: clearSelection
   } = useGridSelection(items)
 
-  // 离开 / 切换分类时清空选择
   useEffect(() => () => clearSelection(), [clearSelection])
 
   const load = useCallback(async () => {
@@ -77,10 +76,8 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
 
   useEffect(() => {
     void load()
-    // categoryRefreshNonce 变化时重载（跨视图"移动到此"后当前分类需刷新）
   }, [load, categoryRefreshNonce])
 
-  // 视图本身切到别的分类时，关闭弹窗，避免遗留
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setMenu(null)
@@ -107,6 +104,14 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     }
   }, [])
 
+  const handleOpenFile = useCallback(async (item: MediaItem) => {
+    try {
+      await window.api.openFile(item.id)
+    } catch (err) {
+      console.error('openFile failed:', err)
+    }
+  }, [])
+
   const handleThumbError = useCallback(async (item: MediaItem) => {
     setItems((prev) => prev.filter((it) => it.id !== item.id))
     try {
@@ -116,12 +121,19 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     }
   }, [])
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, item: MediaItem) => {
-    e.preventDefault()
-    setMenu({ x: e.clientX, y: e.clientY, item })
-  }, [])
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, item: MediaItem) => {
+      if (selectionActive) return
+      e.preventDefault()
+      setMenu({ x: e.clientX, y: e.clientY, item })
+    },
+    [selectionActive]
+  )
 
-  const closeMenu = useCallback(() => setMenu(null), [])
+  const closeMenu = useCallback(() => {
+    setMenu(null)
+    setPicker(null)
+  }, [])
 
   const performRemove = useCallback(
     async (item: MediaItem) => {
@@ -130,14 +142,13 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
         await removeItem(categoryId, item.id)
       } catch (err) {
         console.error('removeItemFromCategory failed:', err)
-        // 失败回滚
         await load()
       }
     },
     [categoryId, removeItem, load]
   )
 
-  // ===== 批量操作（多选工具条） =====
+  // ===== 批量操作 =====
 
   const handleBatchLike = useCallback(async () => {
     const ids = getSelectedIds()
@@ -166,6 +177,21 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     [getSelectedIds, deselectAll, addItemsToCategory]
   )
 
+  const handleBatchCreateAndAddToCategory = useCallback(
+    async (name: string) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      deselectAll()
+      try {
+        const id = await createCategory(name)
+        await addItemsToCategory(id, ids)
+      } catch (err) {
+        console.error('batchCreateAndAdd failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, createCategory, addItemsToCategory]
+  )
+
   const performBatchRemove = useCallback(async () => {
     const ids = getSelectedIds()
     if (ids.length === 0) return
@@ -180,6 +206,12 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
     }
   }, [getSelectedIds, deselectAll, removeItems, categoryId, load])
 
+  // 其他分类（排除当前分类）供"添加到分类"子菜单使用
+  const otherCategories = useMemo(
+    () => categories.filter((c) => c.id !== categoryId),
+    [categories, categoryId]
+  )
+
   const menuItems: ContextMenuItem[] = menu
     ? [
         {
@@ -189,11 +221,32 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
           onClick: () => void handleLikeToggle(menu.item.id, !menu.item.liked)
         },
         {
+          key: 'open',
+          label: '使用默认应用打开',
+          icon: ExternalLink,
+          onClick: () => void handleOpenFile(menu.item)
+        },
+        {
           key: 'reveal',
           label: '在文件管理器中显示',
           icon: FolderOpen,
           onClick: () => void handleReveal(menu.item)
         },
+        ...(otherCategories.length > 0
+          ? ([
+              { key: 'div-cat', divider: true },
+              {
+                key: 'add-to-cat',
+                label: '添加到分类',
+                icon: FolderPlus,
+                submenuOpen: !!picker,
+                onSubmenuOpen: (rect: DOMRect) => {
+                  setPicker({ x: rect.right, y: rect.top, item: menu.item })
+                }
+              }
+            ] as ContextMenuItem[])
+          : []),
+        { key: 'div-end', divider: true },
         {
           key: 'remove',
           label: '从分类移除',
@@ -206,13 +259,6 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
 
   return (
     <div className="p-4">
-      <div className="px-2 mb-3 flex items-baseline gap-3">
-        <h2 className="text-lg font-semibold">{category?.name ?? '分类'}</h2>
-        <span className="text-xs text-muted-foreground">
-          {items.length.toLocaleString()} 项
-        </span>
-      </div>
-
       {loading && items.length === 0 ? (
         <div className="h-96 flex items-center justify-center">
           <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -236,6 +282,25 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
+      )}
+
+      {picker && (
+        <CategoryPicker
+          x={picker.x}
+          y={picker.y}
+          placement="submenu"
+          categories={otherCategories}
+          onSelect={(id) => void addItemsToCategory(id, [picker.item.id])}
+          onCreateAndSelect={(name) => {
+            const item = picker.item
+            setPicker(null)
+            void (async () => {
+              const id = await createCategory(name)
+              await addItemsToCategory(id, [item.id])
+            })()
+          }}
+          onClose={() => setPicker(null)}
+        />
       )}
 
       {confirmRemove && (
@@ -268,9 +333,10 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
         onClear={clearSelection}
         onSelectAll={handleSelectAll}
         onDeselectAll={deselectAll}
-        categories={categories}
+        categories={otherCategories}
         onLike={handleBatchLike}
         onAddToCategory={handleBatchAddToCategory}
+        onCreateAndAddToCategory={handleBatchCreateAndAddToCategory}
         onRemoveFromCategory={() => setConfirmBatchRemove(true)}
       />
 

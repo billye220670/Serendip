@@ -27,6 +27,8 @@ export interface SerendipAPI {
   listLiked(): Promise<MediaItem[]>
   markUnavailable(fileId: number, reason: string): Promise<void>
   revealInFolder(fileId: number): Promise<void>
+  /** 用系统默认应用打开文件 */
+  openFile(fileId: number): Promise<void>
   /** 用系统资源管理器打开目录（不选中文件） */
   openFolder(folderPath: string): Promise<void>
 
@@ -75,6 +77,7 @@ export const IPC = {
   LIST_LIKED: 'serendip:listLiked',
   MARK_UNAVAILABLE: 'serendip:markUnavailable',
   REVEAL_IN_FOLDER: 'serendip:revealInFolder',
+  OPEN_FILE: 'serendip:openFile',
   OPEN_FOLDER: 'serendip:openFolder',
   LIST_CATEGORIES: 'serendip:listCategories',
   CREATE_CATEGORY: 'serendip:createCategory',
@@ -87,5 +90,6 @@ export const IPC = {
   REMOVE_ITEMS_FROM_CATEGORY: 'serendip:removeItemsFromCategory',
   GET_FILE_CATEGORY_IDS: 'serendip:getFileCategoryIds',
   SET_TITLE_BAR_OVERLAY: 'serendip:setTitleBarOverlay',
-  FULLSCREEN_CHANGE: 'serendip:fullscreenChange'
+  FULLSCREEN_CHANGE: 'serendip:fullscreenChange',
+  WINDOW_MOVE: 'serendip:windowMove'
 } as const

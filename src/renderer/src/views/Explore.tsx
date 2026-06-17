@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Loader2, Heart, HeartOff, EyeOff, FolderOpen, Folder } from 'lucide-react'
+import { Loader2, Heart, HeartOff, EyeOff, FolderOpen, ExternalLink, FolderPlus } from 'lucide-react'
 import { MasonryGrid } from '../components/MasonryGrid'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
+import { CategoryPicker } from '../components/CategoryPicker'
 import { SelectionToolbar } from '../components/SelectionToolbar'
 import { useUIStore } from '../stores/ui'
 import { useLibraryStore } from '../stores/library'
@@ -18,22 +19,29 @@ interface MenuState {
   item: MediaItem
 }
 
+interface PickerState {
+  x: number
+  y: number
+  item: MediaItem
+}
+
 export function ExploreView(): React.JSX.Element {
   const exploreMode = useUIStore((s) => s.exploreMode)
   const rootPath = useLibraryStore((s) => s.rootPath)
   const loadStats = useLibraryStore((s) => s.loadStats)
   const categories = useCategoriesStore((s) => s.categories)
+  const createCategory = useCategoriesStore((s) => s.create)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const openDetail = useDetailStore((s) => s.open)
 
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [picker, setPicker] = useState<PickerState | null>(null)
   const seenIdsRef = useRef<Set<number>>(new Set())
   const loadingRef = useRef(false)
   const hasMoreRef = useRef(true)
 
-  // 多选（阶段 5）
   const {
     selectedCount,
     selectionActive,
@@ -45,7 +53,6 @@ export function ExploreView(): React.JSX.Element {
     clear: clearSelection
   } = useGridSelection(items)
 
-  // 离开探索视图时清空选择
   useEffect(() => () => clearSelection(), [clearSelection])
 
   const loadMore = useCallback(
@@ -60,7 +67,6 @@ export function ExploreView(): React.JSX.Element {
           (it) => it && it.id != null && !seenIdsRef.current.has(it.id)
         )
         for (const f of fresh) seenIdsRef.current.add(f.id)
-        // 如果连续两次拿不到新内容，认为没更多了
         if (fresh.length === 0 && !initial) {
           hasMoreRef.current = false
         } else {
@@ -77,7 +83,6 @@ export function ExploreView(): React.JSX.Element {
     [exploreMode]
   )
 
-  // 切换模式或根目录时重置
   useEffect(() => {
     seenIdsRef.current = new Set()
     hasMoreRef.current = true
@@ -86,17 +91,14 @@ export function ExploreView(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exploreMode, rootPath])
 
-  /** 触底加载更多（masonic onRender 触发，见 MasonryGrid） */
   const handleLoadMore = useCallback(() => {
     void loadMore(false)
   }, [loadMore])
 
-  /** 从当前列表移除一项（不感兴趣 / 失效），并补刀加载 */
   const removeItem = useCallback(
     (id: number) => {
       setItems((prev) => {
         const next = prev.filter((it) => it.id !== id)
-        // 列表过短时主动拉一批，保证瀑布流不空
         if (next.length < BATCH_SIZE / 2 && hasMoreRef.current) {
           void loadMore(false)
         }
@@ -108,7 +110,6 @@ export function ExploreView(): React.JSX.Element {
 
   const handleLikeToggle = useCallback(
     async (id: number, liked: boolean) => {
-      // 先更新 UI 中那一项（非阻塞），再持久化
       setItems((prev) =>
         prev.map((it) => (it.id === id ? { ...it, liked: liked ? 1 : 0 } : it))
       )
@@ -142,6 +143,14 @@ export function ExploreView(): React.JSX.Element {
     }
   }, [])
 
+  const handleOpenFile = useCallback(async (item: MediaItem) => {
+    try {
+      await window.api.openFile(item.id)
+    } catch (err) {
+      console.error('openFile failed:', err)
+    }
+  }, [])
+
   const handleAddToCategory = useCallback(
     async (item: MediaItem, categoryId: number) => {
       try {
@@ -153,7 +162,18 @@ export function ExploreView(): React.JSX.Element {
     [addItemsToCategory]
   )
 
-  /** 缩略图加载失败 → 标记失效并从列表移除 */
+  const handleCreateAndAddToCategory = useCallback(
+    async (item: MediaItem, name: string) => {
+      try {
+        const id = await createCategory(name)
+        await addItemsToCategory(id, [item.id])
+      } catch (err) {
+        console.error('createAndAddToCategory failed:', err)
+      }
+    },
+    [createCategory, addItemsToCategory]
+  )
+
   const handleThumbError = useCallback(
     async (item: MediaItem) => {
       removeItem(item.id)
@@ -166,14 +186,21 @@ export function ExploreView(): React.JSX.Element {
     [removeItem]
   )
 
-  const handleContextMenu = useCallback((e: React.MouseEvent, item: MediaItem) => {
-    e.preventDefault()
-    setMenu({ x: e.clientX, y: e.clientY, item })
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent, item: MediaItem) => {
+      if (selectionActive) return
+      e.preventDefault()
+      setMenu({ x: e.clientX, y: e.clientY, item })
+    },
+    [selectionActive]
+  )
+
+  const closeMenu = useCallback(() => {
+    setMenu(null)
+    setPicker(null)
   }, [])
 
-  const closeMenu = useCallback(() => setMenu(null), [])
-
-  // ===== 批量操作（多选工具条） =====
+  // ===== 批量操作 =====
 
   const handleBatchLike = useCallback(async () => {
     const ids = getSelectedIds()
@@ -220,6 +247,21 @@ export function ExploreView(): React.JSX.Element {
     [getSelectedIds, deselectAll, addItemsToCategory]
   )
 
+  const handleBatchCreateAndAddToCategory = useCallback(
+    async (name: string) => {
+      const ids = getSelectedIds()
+      if (ids.length === 0) return
+      deselectAll()
+      try {
+        const id = await createCategory(name)
+        await addItemsToCategory(id, ids)
+      } catch (err) {
+        console.error('batchCreateAndAdd failed:', err)
+      }
+    },
+    [getSelectedIds, deselectAll, createCategory, addItemsToCategory]
+  )
+
   if (items.length === 0 && loading) {
     return (
       <div className="h-96 flex items-center justify-center">
@@ -245,22 +287,29 @@ export function ExploreView(): React.JSX.Element {
           onClick: () => void handleLikeToggle(menu.item.id, !menu.item.liked)
         },
         {
+          key: 'open',
+          label: '使用默认应用打开',
+          icon: ExternalLink,
+          onClick: () => void handleOpenFile(menu.item)
+        },
+        {
           key: 'reveal',
           label: '在文件管理器中显示',
           icon: FolderOpen,
           onClick: () => void handleReveal(menu.item)
         },
-        // 添加到分类（只有存在分类时才显示）
         ...(categories.length > 0
           ? ([
               { key: 'div-cat', divider: true },
-              { key: 'h-cat', header: true, label: '添加到分类' },
-              ...categories.map<ContextMenuItem>((c) => ({
-                key: `cat-${c.id}`,
-                label: c.name,
-                icon: Folder,
-                onClick: () => void handleAddToCategory(menu.item, c.id)
-              }))
+              {
+                key: 'add-to-cat',
+                label: '添加到分类',
+                icon: FolderPlus,
+                submenuOpen: !!picker,
+                onSubmenuOpen: (rect: DOMRect) => {
+                  setPicker({ x: rect.right, y: rect.top, item: menu.item })
+                }
+              }
             ] as ContextMenuItem[])
           : []),
         { key: 'div-end', divider: true },
@@ -304,6 +353,18 @@ export function ExploreView(): React.JSX.Element {
         <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} />
       )}
 
+      {picker && (
+        <CategoryPicker
+          x={picker.x}
+          y={picker.y}
+          placement="submenu"
+          categories={categories}
+          onSelect={(id) => void handleAddToCategory(picker.item, id)}
+          onCreateAndSelect={(name) => void handleCreateAndAddToCategory(picker.item, name)}
+          onClose={() => setPicker(null)}
+        />
+      )}
+
       <SelectionToolbar
         active={selectionActive}
         count={selectedCount}
@@ -315,6 +376,7 @@ export function ExploreView(): React.JSX.Element {
         onLike={handleBatchLike}
         onDislike={handleBatchDislike}
         onAddToCategory={handleBatchAddToCategory}
+        onCreateAndAddToCategory={handleBatchCreateAndAddToCategory}
       />
     </div>
   )
