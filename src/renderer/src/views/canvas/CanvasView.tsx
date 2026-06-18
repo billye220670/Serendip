@@ -8,9 +8,12 @@ import { useCanvasesStore } from '../../stores/canvases'
 import { useCanvasItemsStore } from '../../stores/canvasItems'
 import { useCanvasViewportStore, flushViewportNow } from '../../stores/canvasViewport'
 import { useCanvasSelectionStore } from '../../stores/canvasSelection'
+import { useCanvasUndoStore } from '../../stores/canvasUndo'
 import { fitViewport, clampScale, DEFAULT_VIEWPORT, ZOOM_STEP } from '../../lib/canvasMath'
+import { navigateDirection, panToItem } from '../../lib/canvasNavigate'
 import { CanvasItemNode } from './CanvasItemNode'
 import { CanvasToolbar } from './CanvasToolbar'
+import type { CanvasItemPatch } from '../../../../main/canvases'
 
 // 自定义 hand cursor — 实心：深色底层描边（3.5px）+ 白色前景描边（2px）
 // viewBox 0 0 24 24 → 32×32 cursor；hotspot 在手掌中心
@@ -219,6 +222,8 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const marqueeStartRef = useRef<Set<number>>(new Set())
   // 本次框选是否真的发生了拖拽（用于阻止收尾 click 误清空选区）
   const marqueeActiveRef = useRef(false)
+  // 手势（拖移/缩放/旋转）开始前的 item 快照，用于 undo 的 before 状态
+  const gestureSnapshotRef = useRef<Map<number, { x: number; y: number; w: number; h: number; rotation: number }>>(new Map())
 
   const setCurrent = useCurrentCanvasStore((s) => s.setCurrent)
   const items = useCanvasItemsStore((s) => s.items)
@@ -235,7 +240,6 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const selectionSelect = useCanvasSelectionStore((s) => s.select)
   const selectionToggle = useCanvasSelectionStore((s) => s.toggle)
   const selectionClear = useCanvasSelectionStore((s) => s.clear)
-  const selectionSelectAll = useCanvasSelectionStore((s) => s.selectAll)
 
   // 选中元素的 DOM 节点列表（渲染时查询，保证 Moveable target 是最新的）
   const selectedElements = Array.from(selected)
@@ -298,18 +302,17 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     const selectedItemsList = items.filter((it) => currentSelected.has(it.id))
     if (selectedItemsList.length === 0) return
 
+    let afterPatches: CanvasItemPatch[]
+
     if (selectedItemsList.length === 1) {
       const item = selectedItemsList[0]
-      flushSync(() => {
-        updateItems([{ id: item.id, rotation: item.rotation + totalDeltaRad }])
-      })
+      afterPatches = [{ id: item.id, rotation: item.rotation + totalDeltaRad }]
     } else {
-      // 多选：各 item 绕选区重心旋转，位置同步更新
       const groupCx = selectedItemsList.reduce((s, it) => s + it.x, 0) / selectedItemsList.length
       const groupCy = selectedItemsList.reduce((s, it) => s + it.y, 0) / selectedItemsList.length
       const cos = Math.cos(totalDeltaRad)
       const sin = Math.sin(totalDeltaRad)
-      const patches = selectedItemsList.map((item) => {
+      afterPatches = selectedItemsList.map((item) => {
         const dx = item.x - groupCx
         const dy = item.y - groupCy
         return {
@@ -319,9 +322,26 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           rotation: item.rotation + totalDeltaRad,
         }
       })
-      flushSync(() => { updateItems(patches) })
     }
+
+    const beforePatches: CanvasItemPatch[] = selectedItemsList.map((it) => ({
+      id: it.id, x: it.x, y: it.y, rotation: it.rotation,
+    }))
+    const finalAfter = afterPatches
+
+    flushSync(() => { updateItems(finalAfter) })
     moveableRef.current?.updateRect()
+
+    useCanvasUndoStore.getState().push({
+      apply: () => {
+        useCanvasItemsStore.getState().updateItems(finalAfter)
+        moveableRef.current?.updateRect()
+      },
+      revert: () => {
+        useCanvasItemsStore.getState().updateItems(beforePatches)
+        moveableRef.current?.updateRect()
+      },
+    })
   }, [items, updateItems])
 
   // ── wheel → 离散档位 zoom（以光标为锚点）──
@@ -409,7 +429,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     }
   }, [canvasId, setViewport, setPanCursor])
 
-  // ── Space / F / Esc / Ctrl+A 键盘 ──
+  // ── Space / F / Esc / Ctrl+A / Delete / [/] 层级 / Ctrl+Z/Y / 方向键 ──
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       const target = e.target as HTMLElement
@@ -418,25 +438,108 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       if (e.code === 'Space') {
         e.preventDefault()
         spaceHeldRef.current = true
-        if (!isPanningRef.current) {
-          setPanCursor(CURSOR_HAND_OPEN)
-        }
+        if (!isPanningRef.current) setPanCursor(CURSOR_HAND_OPEN)
+
       } else if (e.key === 'f' || e.key === 'F') {
         handleFit()
+
       } else if (e.key === 'Escape') {
         selectionClear()
+
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault()
-        selectionSelectAll(items)
+        useCanvasSelectionStore.getState().selectAll(useCanvasItemsStore.getState().items)
+
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault()
+        const selIds = Array.from(useCanvasSelectionStore.getState().selected)
+        if (selIds.length === 0) return
+        const allItems = useCanvasItemsStore.getState().items
+        const snapshots = allItems.filter((it) => selIds.includes(it.id))
+        if (snapshots.length === 0) return
+
+        void (async () => {
+          await useCanvasItemsStore.getState().removeItems(canvasId, selIds)
+          useCanvasSelectionStore.getState().clear()
+          moveableRef.current?.updateRect()
+
+          // 可撤销：revert 时重建（新 id），apply 时删除重建的 id
+          const restoredIdsRef = { current: [] as number[] }
+          useCanvasUndoStore.getState().push({
+            apply: async () => {
+              if (restoredIdsRef.current.length > 0) {
+                await useCanvasItemsStore.getState().removeItems(canvasId, restoredIdsRef.current)
+                restoredIdsRef.current = []
+              }
+              useCanvasSelectionStore.getState().clear()
+              moveableRef.current?.updateRect()
+            },
+            revert: async () => {
+              const inputs = snapshots.map((it) => ({
+                fileId: it.fileId, x: it.x, y: it.y, w: it.w, h: it.h, z: it.z, rotation: it.rotation,
+              }))
+              const newIds = await window.api.addItemsToCanvas(canvasId, inputs)
+              restoredIdsRef.current = newIds
+              useCanvasItemsStore.getState().bump()
+              moveableRef.current?.updateRect()
+            },
+          })
+        })()
+
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'BracketRight') {
+        e.preventDefault()
+        applyZOrder('bringToFront')
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'BracketLeft') {
+        e.preventDefault()
+        applyZOrder('sendToBack')
+      } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'BracketRight') {
+        e.preventDefault()
+        applyZOrder('bringForward')
+      } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'BracketLeft') {
+        e.preventDefault()
+        applyZOrder('sendBackward')
+
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        void useCanvasUndoStore.getState().undo().then(() => {
+          requestAnimationFrame(() => { moveableRef.current?.updateRect() })
+        })
+      } else if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))
+      ) {
+        e.preventDefault()
+        void useCanvasUndoStore.getState().redo().then(() => {
+          requestAnimationFrame(() => { moveableRef.current?.updateRect() })
+        })
+
+      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault()
+        const allItems = useCanvasItemsStore.getState().items
+        const selSet = useCanvasSelectionStore.getState().selected
+        const container = containerRef.current
+        if (!container || allItems.length === 0) return
+        const { width, height } = container.getBoundingClientRect()
+        const vp = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
+        const newId = navigateDirection(
+          e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown',
+          allItems, selSet, vp, width, height,
+        )
+        if (newId === null) return
+        useCanvasSelectionStore.getState().select([newId])
+        const newItem = allItems.find((it) => it.id === newId)
+        if (newItem) {
+          const newVp = panToItem(newItem, vp, width, height)
+          if (newVp) useCanvasViewportStore.getState().setViewport(canvasId, newVp)
+        }
+        requestAnimationFrame(() => { moveableRef.current?.updateRect() })
       }
     }
 
     const onKeyUp = (e: KeyboardEvent): void => {
       if (e.code === 'Space') {
         spaceHeldRef.current = false
-        if (!isPanningRef.current) {
-          setPanCursor(null)
-        }
+        if (!isPanningRef.current) setPanCursor(null)
       }
     }
 
@@ -447,9 +550,64 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       window.removeEventListener('keyup', onKeyUp)
       setPanCursor(null)
     }
-  }, [handleFit, selectionClear, selectionSelectAll, items, setPanCursor])
+  }, [handleFit, selectionClear, canvasId, setPanCursor])
 
   const vp = viewport
+
+  // 层级操作（[/] 和 Ctrl+Shift+[/]）：计算 z 补丁 + push undo
+  const applyZOrder = useCallback((
+    mode: 'bringForward' | 'sendBackward' | 'bringToFront' | 'sendToBack'
+  ): void => {
+    const selSet = useCanvasSelectionStore.getState().selected
+    const allItems = useCanvasItemsStore.getState().items
+    const selItems = allItems.filter((it) => selSet.has(it.id))
+    if (selItems.length === 0) return
+
+    let patches: CanvasItemPatch[] = []
+    const nonSelItems = allItems.filter((it) => !selSet.has(it.id))
+
+    if (mode === 'bringToFront' || (mode === 'bringForward' && selItems.length > 1)) {
+      const maxZ = nonSelItems.length > 0 ? Math.max(...nonSelItems.map((it) => it.z)) : 0
+      const sorted = [...selItems].sort((a, b) => a.z - b.z)
+      patches = sorted.map((item, i) => ({ id: item.id, z: maxZ + i + 1 }))
+    } else if (mode === 'sendToBack' || (mode === 'sendBackward' && selItems.length > 1)) {
+      const minZ = nonSelItems.length > 0 ? Math.min(...nonSelItems.map((it) => it.z)) : 0
+      const sorted = [...selItems].sort((a, b) => b.z - a.z)
+      patches = sorted.map((item, i) => ({ id: item.id, z: minZ - i - 1 }))
+    } else if (mode === 'bringForward') {
+      const item = selItems[0]
+      const above = allItems.filter((it) => it.id !== item.id && it.z > item.z).sort((a, b) => a.z - b.z)[0]
+      if (!above) return
+      patches = [{ id: item.id, z: above.z }, { id: above.id, z: item.z }]
+    } else {
+      const item = selItems[0]
+      const below = allItems.filter((it) => it.id !== item.id && it.z < item.z).sort((a, b) => b.z - a.z)[0]
+      if (!below) return
+      patches = [{ id: item.id, z: below.z }, { id: below.id, z: item.z }]
+    }
+
+    if (patches.length === 0) return
+
+    const beforePatches: CanvasItemPatch[] = patches.map((p) => ({
+      id: p.id,
+      z: allItems.find((it) => it.id === p.id)?.z ?? 0,
+    }))
+    const finalPatches = patches
+
+    useCanvasItemsStore.getState().updateItems(finalPatches)
+    moveableRef.current?.updateRect()
+
+    useCanvasUndoStore.getState().push({
+      apply: () => {
+        useCanvasItemsStore.getState().updateItems(finalPatches)
+        moveableRef.current?.updateRect()
+      },
+      revert: () => {
+        useCanvasItemsStore.getState().updateItems(beforePatches)
+        moveableRef.current?.updateRect()
+      },
+    })
+  }, [])
 
   // viewport 变化（pan/zoom）后，同步 Moveable 手柄到 items 新位置
   // 用 useLayoutEffect：DOM commit 后、浏览器 paint 前执行，手柄与 items 同帧对齐
@@ -575,6 +733,12 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           // 拖整组仍走 per-item onPointerDown（按住任一选中图），不依赖此中央区。
           passDragArea={true}
           // ── 拖动（单选）──
+          onDragStart={(e) => {
+            const el = e.target as HTMLElement
+            const itemId = Number(el.dataset.canvasItemId)
+            const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+            if (item) gestureSnapshotRef.current = new Map([[itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]])
+          }}
           onDrag={(e) => {
             e.target.style.transform = e.transform
           }}
@@ -585,16 +749,31 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             const item = items.find((it) => it.id === itemId)
             if (!item) return
             const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            // dist 是从拖动开始的总位移（不是 delta 单帧增量）
             const distX = (e.lastEvent?.dist?.[0] ?? 0) / scale
             const distY = (e.lastEvent?.dist?.[1] ?? 0) / scale
-            // flushSync 强制 React 同步重渲染，写入正确 transform，再让 Moveable 读取位置
-            flushSync(() => {
-              updateItems([{ id: itemId, x: item.x + distX, y: item.y + distY }])
-            })
+            const afterPatches = [{ id: itemId, x: item.x + distX, y: item.y + distY }]
+            const snap = gestureSnapshotRef.current.get(itemId)
+            const beforePatches = snap ? [{ id: itemId, x: snap.x, y: snap.y }] : null
+            flushSync(() => { updateItems(afterPatches) })
             moveableRef.current?.updateRect()
+            if (beforePatches) {
+              const fa = afterPatches
+              useCanvasUndoStore.getState().push({
+                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
+                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
+              })
+            }
           }}
           // ── 拖动（多选）──
+          onDragGroupStart={(e) => {
+            const snap = new Map<number, { x: number; y: number; w: number; h: number; rotation: number }>()
+            for (const ev of e.events) {
+              const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
+              const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+              if (item) snap.set(itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation })
+            }
+            gestureSnapshotRef.current = snap
+          }}
           onDragGroup={(e) => {
             e.events.forEach((ev) => {
               ev.target.style.transform = ev.transform
@@ -602,7 +781,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           }}
           onDragGroupEnd={(e) => {
             const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const patches = e.events
+            const afterPatches = e.events
               .filter((ev) => ev.isDrag)
               .map((ev) => {
                 const el = ev.target as HTMLElement
@@ -614,16 +793,29 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
                 return { id: itemId, x: item.x + distX, y: item.y + distY }
               })
               .filter((p): p is NonNullable<typeof p> => p !== null)
-            flushSync(() => {
-              if (patches.length > 0) updateItems(patches)
+            const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
+              const snap = gestureSnapshotRef.current.get(p.id)
+              return { id: p.id, x: snap?.x ?? p.x, y: snap?.y ?? p.y }
             })
+            flushSync(() => { if (afterPatches.length > 0) updateItems(afterPatches) })
             moveableRef.current?.updateRect()
+            if (afterPatches.length > 0) {
+              const fa = afterPatches
+              useCanvasUndoStore.getState().push({
+                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
+                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
+              })
+            }
           }}
           // ── 缩放（单选）──
           onResizeStart={(e) => {
             setIsResizing(true)
             const ie = e.inputEvent as PointerEvent
             lockResizeCursor(ie.clientX, ie.clientY)
+            const el = e.target as HTMLElement
+            const itemId = Number(el.dataset.canvasItemId)
+            const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+            if (item) gestureSnapshotRef.current = new Map([[itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]])
           }}
           onResize={(e) => {
             e.target.style.transform = e.drag.transform
@@ -641,25 +833,37 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
             const newW = (e.lastEvent?.width ?? item.w * scale) / scale
             const newH = (e.lastEvent?.height ?? item.h * scale) / scale
-            // drag.dist 是元素左上角的屏幕位移；中心还需额外加尺寸变化的一半
             const dragDistX = (e.lastEvent?.drag?.dist?.[0] ?? 0) / scale
             const dragDistY = (e.lastEvent?.drag?.dist?.[1] ?? 0) / scale
-            flushSync(() => {
-              updateItems([{
-                id: itemId,
-                w: newW,
-                h: newH,
-                x: item.x + dragDistX + (newW - item.w) / 2,
-                y: item.y + dragDistY + (newH - item.h) / 2,
-              }])
-            })
+            const afterPatches = [{
+              id: itemId, w: newW, h: newH,
+              x: item.x + dragDistX + (newW - item.w) / 2,
+              y: item.y + dragDistY + (newH - item.h) / 2,
+            }]
+            const snap = gestureSnapshotRef.current.get(itemId)
+            const beforePatches = snap ? [{ id: itemId, x: snap.x, y: snap.y, w: snap.w, h: snap.h }] : null
+            flushSync(() => { updateItems(afterPatches) })
             moveableRef.current?.updateRect()
+            if (beforePatches) {
+              const fa = afterPatches
+              useCanvasUndoStore.getState().push({
+                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
+                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
+              })
+            }
           }}
           // ── 缩放（多选）──
           onResizeGroupStart={(e) => {
             setIsResizing(true)
             const ie = e.inputEvent as PointerEvent
             lockResizeCursor(ie.clientX, ie.clientY)
+            const snap = new Map<number, { x: number; y: number; w: number; h: number; rotation: number }>()
+            for (const ev of e.events) {
+              const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
+              const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+              if (item) snap.set(itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation })
+            }
+            gestureSnapshotRef.current = snap
           }}
           onResizeGroup={(e) => {
             e.events.forEach((ev) => {
@@ -672,7 +876,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             setIsResizing(false)
             unlockResizeCursor()
             const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const patches = e.events
+            const afterPatches = e.events
               .filter((ev) => ev.isDrag)
               .map((ev) => {
                 const el = ev.target as HTMLElement
@@ -684,20 +888,33 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
                 const dragDistX = (ev.lastEvent?.drag?.dist?.[0] ?? 0) / scale
                 const dragDistY = (ev.lastEvent?.drag?.dist?.[1] ?? 0) / scale
                 return {
-                  id: itemId,
-                  w: newW,
-                  h: newH,
+                  id: itemId, w: newW, h: newH,
                   x: item.x + dragDistX + (newW - item.w) / 2,
                   y: item.y + dragDistY + (newH - item.h) / 2,
                 }
               })
               .filter((p): p is NonNullable<typeof p> => p !== null)
-            flushSync(() => {
-              if (patches.length > 0) updateItems(patches)
+            const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
+              const snap = gestureSnapshotRef.current.get(p.id)
+              return { id: p.id, x: snap?.x ?? p.x, y: snap?.y ?? p.y, w: snap?.w ?? p.w, h: snap?.h ?? p.h }
             })
+            flushSync(() => { if (afterPatches.length > 0) updateItems(afterPatches) })
             moveableRef.current?.updateRect()
+            if (afterPatches.length > 0) {
+              const fa = afterPatches
+              useCanvasUndoStore.getState().push({
+                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
+                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
+              })
+            }
           }}
           // ── 旋转（单选）──
+          onRotateStart={(e) => {
+            const el = e.target as HTMLElement
+            const itemId = Number(el.dataset.canvasItemId)
+            const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+            if (item) gestureSnapshotRef.current = new Map([[itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]])
+          }}
           onRotate={(e) => {
             e.target.style.transform = e.drag.transform
           }}
@@ -707,17 +924,30 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             const itemId = Number(el.dataset.canvasItemId)
             const item = items.find((it) => it.id === itemId)
             if (!item) return
-            // dist 是从旋转开始的总角度（度），不是 delta 单帧增量
             const totalRotDeg = e.lastEvent?.dist ?? 0
-            flushSync(() => {
-              updateItems([{
-                id: itemId,
-                rotation: item.rotation + (totalRotDeg * Math.PI) / 180,
-              }])
-            })
+            const afterPatches = [{ id: itemId, rotation: item.rotation + (totalRotDeg * Math.PI) / 180 }]
+            const snap = gestureSnapshotRef.current.get(itemId)
+            const beforePatches = snap ? [{ id: itemId, rotation: snap.rotation }] : null
+            flushSync(() => { updateItems(afterPatches) })
             moveableRef.current?.updateRect()
+            if (beforePatches) {
+              const fa = afterPatches
+              useCanvasUndoStore.getState().push({
+                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
+                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
+              })
+            }
           }}
           // ── 旋转（多选）──
+          onRotateGroupStart={(e) => {
+            const snap = new Map<number, { x: number; y: number; w: number; h: number; rotation: number }>()
+            for (const ev of e.events) {
+              const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
+              const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+              if (item) snap.set(itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation })
+            }
+            gestureSnapshotRef.current = snap
+          }}
           onRotateGroup={(e) => {
             e.events.forEach((ev) => {
               ev.target.style.transform = ev.drag.transform
@@ -725,7 +955,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           }}
           onRotateGroupEnd={(e) => {
             const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const patches = e.events
+            const afterPatches = e.events
               .filter((ev) => ev.isDrag)
               .map((ev) => {
                 const el = ev.target as HTMLElement
@@ -743,10 +973,19 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
                 }
               })
               .filter((p): p is NonNullable<typeof p> => p !== null)
-            flushSync(() => {
-              if (patches.length > 0) updateItems(patches)
+            const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
+              const snap = gestureSnapshotRef.current.get(p.id)
+              return { id: p.id, rotation: snap?.rotation ?? p.rotation, x: snap?.x ?? p.x, y: snap?.y ?? p.y }
             })
+            flushSync(() => { if (afterPatches.length > 0) updateItems(afterPatches) })
             moveableRef.current?.updateRect()
+            if (afterPatches.length > 0) {
+              const fa = afterPatches
+              useCanvasUndoStore.getState().push({
+                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
+                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
+              })
+            }
           }}
         />
 

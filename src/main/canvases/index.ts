@@ -46,6 +46,7 @@ export interface CanvasItemInput {
   w: number
   h: number
   z: number
+  rotation?: number
 }
 
 export interface CanvasItemPatch {
@@ -175,7 +176,7 @@ export function addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): nu
     'SELECT width, height FROM media_files WHERE id = ?'
   )
   const insert = db.prepare(
-    'INSERT INTO canvas_items (canvas_id, file_id, x, y, w, h, z) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO canvas_items (canvas_id, file_id, x, y, w, h, z, rotation) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
   )
   const ids: number[] = []
   const txn = db.transaction((inputs: CanvasItemInput[]) => {
@@ -187,7 +188,7 @@ export function addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): nu
         w = CANVAS_DISPLAY_W
         h = Math.round(CANVAS_DISPLAY_W * (dims.height / dims.width))
       }
-      const r = insert.run(canvasId, item.fileId, item.x, item.y, w, h, item.z)
+      const r = insert.run(canvasId, item.fileId, item.x, item.y, w, h, item.z, item.rotation ?? 0)
       ids.push(Number(r.lastInsertRowid))
     }
   })
