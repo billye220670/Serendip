@@ -162,6 +162,14 @@ body {
   --moveable-color: var(--color-primary) !important;
 }
 
+/* 画布框选矩形：主题色边框 + 低饱和半透明主题色填充
+   selecto 把 :host 替换为 .rCS{hash} 注入到 document.head，
+   同特异性下我们的 .selecto-selection 够覆盖，但需要 !important 防止哈希类名竞争。 */
+.selecto-selection {
+  border: 1.5px solid var(--color-primary) !important;
+  background: hsl(var(--brand-hue) 35% 60% / 0.1) !important;
+}
+
 /* 评审标题确认反馈：punch + fade out */
 @keyframes review-label-punch {
   from {
