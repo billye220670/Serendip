@@ -9,6 +9,7 @@ import { useCanvasItemsStore } from '../../stores/canvasItems'
 import { useCanvasViewportStore, flushViewportNow } from '../../stores/canvasViewport'
 import { useCanvasSelectionStore } from '../../stores/canvasSelection'
 import { useCanvasUndoStore } from '../../stores/canvasUndo'
+import { useUIStore } from '../../stores/ui'
 import { fitViewport, clampScale, DEFAULT_VIEWPORT, ZOOM_STEP } from '../../lib/canvasMath'
 import { navigateDirection, panToItem } from '../../lib/canvasNavigate'
 import { CanvasItemNode } from './CanvasItemNode'
@@ -608,6 +609,22 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       },
     })
   }, [])
+
+  // 选中后自动置顶：保留选中项之间的相对 z 顺序，不压撤销栈
+  useEffect(() => {
+    if (selected.size === 0) return
+    if (!useUIStore.getState().canvasAutoTop) return
+    const allItems = useCanvasItemsStore.getState().items
+    const selItems = allItems.filter((it) => selected.has(it.id))
+    const nonSelItems = allItems.filter((it) => !selected.has(it.id))
+    if (selItems.length === 0) return
+    const nonSelMaxZ = nonSelItems.length > 0 ? Math.max(...nonSelItems.map((it) => it.z)) : 0
+    // 已全部在最高层时跳过
+    if (Math.min(...selItems.map((it) => it.z)) > nonSelMaxZ) return
+    const sorted = [...selItems].sort((a, b) => a.z - b.z)
+    const patches = sorted.map((item, i) => ({ id: item.id, z: nonSelMaxZ + i + 1 }))
+    useCanvasItemsStore.getState().updateItems(patches)
+  }, [selected])
 
   // viewport 变化（pan/zoom）后，同步 Moveable 手柄到 items 新位置
   // 用 useLayoutEffect：DOM commit 后、浏览器 paint 前执行，手柄与 items 同帧对齐

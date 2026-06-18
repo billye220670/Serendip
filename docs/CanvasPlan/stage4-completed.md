@@ -1,6 +1,6 @@
 # 阶段 4：键盘快捷键 + 撤销重做 + 方向键导航 + 原图加载
 
-> 状态：🔲 待开发
+> 状态：✅ 已完成
 > 所属计划：[main.md](main.md)
 
 ---
@@ -42,3 +42,32 @@
 9. `<input>` focus（如重命名对话框）时按方向键不影响画布。
 10. 大图片元素 thumb 先显示 → 原图加载后瞬切覆盖（无明显闪烁）。
 11. `npm run typecheck` 通过。
+
+---
+
+## 额外功能：自动置顶选中项（Auto-Top on Select）
+
+> 实现于阶段 4 补丁，属于隐式交互增强。
+
+**功能描述**：用户点选或框选元素后，自动将选中元素置于所有未选中元素之上，方便立即交互而无需手动调整层级。
+
+**开关**：`useUIStore.canvasAutoTop: boolean`（默认 `true`，持久化到 localStorage）。工具栏提供按钮实时切换。
+
+**保留相对顺序算法**：
+1. 求 `nonSelMaxZ` = 所有未选中项的 max z（无非选中项则取 0）
+2. 将选中项按当前 z **升序**排列（保留彼此原有的上下关系）
+3. 从低到高依次赋 z = `nonSelMaxZ + 1, +2, …`
+4. 若所有选中项已全部高于 `nonSelMaxZ`（`min(selZ) > nonSelMaxZ`），跳过——无需调整
+
+示例：selected = {A(z=3), B(z=7)}，其余 = {C(z=1), D(z=5), E(z=9)}
+- nonSelMaxZ = 9；升序排列 → A, B；赋 A→10, B→11
+- 结果：C(1), D(5), E(9), A(10), B(11)，A 仍在 B 下方 ✓
+
+**不压撤销栈**：auto-top 是选中动作的隐式副作用，不应出现在 Ctrl+Z 历史中，否则每次点选都会占一条撤销记录，与用户预期相悖。
+
+**触发时机**：`useEffect` 监听 `selected` Set 引用变化（选区每次改变后自动检查）。覆盖：单击选中、Ctrl/Shift 点选、框选、方向键切换——均由选区变化驱动，无需在每个入口单独调用。撤销/重做不触发（undo/redo 只改 item 属性，不改选区引用）。
+
+**改动文件**：
+- `src/renderer/src/stores/ui.ts`：新增 `canvasAutoTop` + `toggleAutoTop`
+- `src/renderer/src/views/canvas/CanvasToolbar.tsx`：新增层叠图标切换按钮
+- `src/renderer/src/views/canvas/CanvasView.tsx`：新增 `useEffect` 监听 `selected` 实施 auto-top

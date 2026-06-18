@@ -19,6 +19,8 @@ interface UIState {
   canvasesGroupOpen: boolean
   /** 画布全部视频静止（图片化）开关 */
   canvasFreezeVideos: boolean
+  /** 选中元素后自动置顶（保留选中项之间的相对 z 顺序） */
+  canvasAutoTop: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
   setExploreMode: (mode: ExploreMode) => void
@@ -31,6 +33,7 @@ interface UIState {
   toggleCategoriesGroup: () => void
   toggleCanvasesGroup: () => void
   toggleFreezeVideos: () => void
+  toggleAutoTop: () => void
 }
 
 const GRID_ORDER: GridSize[] = ['small', 'medium', 'large']
@@ -46,6 +49,7 @@ export const useUIStore = create<UIState>()(
       categoriesGroupOpen: true,
       canvasesGroupOpen: false,
       canvasFreezeVideos: false,
+      canvasAutoTop: true,
 
       setTheme: (theme) => {
         set({ theme })
@@ -77,6 +81,8 @@ export const useUIStore = create<UIState>()(
       toggleCanvasesGroup: () => set((state) => ({ canvasesGroupOpen: !state.canvasesGroupOpen })),
 
       toggleFreezeVideos: () => set((state) => ({ canvasFreezeVideos: !state.canvasFreezeVideos })),
+
+      toggleAutoTop: () => set((state) => ({ canvasAutoTop: !state.canvasAutoTop })),
     }),
     {
       name: 'serendip-ui',
