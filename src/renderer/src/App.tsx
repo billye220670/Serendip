@@ -217,7 +217,14 @@ function App(): React.JSX.Element {
   useEffect(() => {
     loadCurrentRoot()
     void loadCategories()
-    void loadCanvases()
+    void loadCanvases().then(() => {
+      // 校验持久化的当前画布是否仍存在，已删除则清空
+      const { currentCanvasId, setCurrent } = useCurrentCanvasStore.getState()
+      if (currentCanvasId !== null) {
+        const exists = useCanvasesStore.getState().canvases.some((c) => c.id === currentCanvasId)
+        if (!exists) setCurrent(null)
+      }
+    })
   }, [loadCurrentRoot, loadCategories, loadCanvases])
 
   const handleSelectRoot = async (): Promise<void> => {
@@ -477,7 +484,7 @@ function App(): React.JSX.Element {
             - 不再 sticky —— 主区独立滚动，顶栏天然就是不滚的兄弟节点 */}
         <header
           data-drag-region="true"
-          className="h-16 flex-shrink-0 z-20 flex items-stretch border-b border-border"
+          className="h-16 flex-shrink-0 z-20 flex items-stretch"
           style={{ ...DRAGGABLE, backgroundColor: theme === 'dark' ? '#111009' : '#f5f4f1' }}
         >
           {/* 左：根目录 / 分类名称区，贴左 */}
@@ -1136,7 +1143,12 @@ function CanvasPopover({
           open ? 'text-primary' : 'text-foreground hover:bg-sidebar-hover'
         )}
       >
-        <Presentation className="w-5 h-5 flex-shrink-0" />
+        <span className="relative flex-shrink-0">
+          <Presentation className="w-5 h-5" />
+          {currentCanvasId !== null && (
+            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-primary" />
+          )}
+        </span>
         {!collapsed && (
           <>
             <span className="truncate flex-1 text-left">画布</span>

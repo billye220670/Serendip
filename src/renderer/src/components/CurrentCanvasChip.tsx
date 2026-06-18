@@ -5,6 +5,7 @@ import { useCurrentCanvasStore } from '../stores/currentCanvas'
 import { useCanvasesStore } from '../stores/canvases'
 import { useLibraryStore } from '../stores/library'
 import type { View } from '../stores/library'
+import { Tooltip } from './Tooltip'
 
 interface CurrentCanvasChipProps {
   style?: React.CSSProperties
@@ -35,32 +36,34 @@ export function CurrentCanvasChip({ style }: CurrentCanvasChipProps): React.JSX.
   }
 
   return (
-    <div
-      className={clsx(
-        'flex items-center gap-2 rounded-lg border px-3 py-2 text-xs select-none cursor-pointer transition-colors',
-        isCanvasView
-          ? 'border-primary bg-primary/10 hover:bg-primary/15'
-          : 'border-border bg-muted/60 hover:bg-muted'
-      )}
-      style={style}
-      title="前往画布"
-      onClick={() => {
-        if (isCanvasView) {
-          setView(prevViewRef.current)
-        } else {
-          setView({ kind: 'canvas', id: currentCanvas.id })
-        }
-      }}
-    >
-      <Presentation className={clsx('w-3.5 h-3.5 flex-shrink-0', isCanvasView ? 'text-primary' : 'text-muted-foreground')} />
-      <span className={clsx('font-medium truncate max-w-[96px]', isCanvasView ? 'text-primary' : 'text-foreground')}>{currentCanvas.name}</span>
-      <button
-        className="ml-2 p-0.5 rounded hover:bg-border transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
-        title="清除当前画布"
-        onClick={handleClose}
+    <Tooltip text="前往画布" side="bottom">
+      <div
+        className={clsx(
+          'flex items-center gap-2 rounded-lg border pl-4 pr-0 py-2.5 text-xs select-none cursor-pointer transition-colors',
+          isCanvasView
+            ? 'border-primary bg-primary/10 hover:bg-primary/15'
+            : 'border-border bg-muted/60 hover:bg-muted'
+        )}
+        style={style}
+        onClick={() => {
+          if (isCanvasView) {
+            setView(prevViewRef.current)
+          } else {
+            setView({ kind: 'canvas', id: currentCanvas.id })
+          }
+        }}
       >
-        <X className="w-3 h-3" />
-      </button>
-    </div>
+        <Presentation className={clsx('w-3.5 h-3.5 flex-shrink-0', isCanvasView ? 'text-primary' : 'text-muted-foreground')} />
+        <span className={clsx('font-medium truncate flex-1', isCanvasView ? 'text-primary' : 'text-foreground')}>{currentCanvas.name}</span>
+        <Tooltip text="清除当前画布" side="bottom">
+          <button
+            className="self-stretch flex items-center pl-2 pr-4 transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+            onClick={handleClose}
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </Tooltip>
+      </div>
+    </Tooltip>
   )
 }
