@@ -150,6 +150,11 @@ body {
   to   { opacity: 1; }
 }
 
+/* 画布 Moveable：隐藏顶部旋转手柄，改用四角旋转区 */
+.moveable-rotation {
+  display: none !important;
+}
+
 /* 评审标题确认反馈：punch + fade out */
 @keyframes review-label-punch {
   from {

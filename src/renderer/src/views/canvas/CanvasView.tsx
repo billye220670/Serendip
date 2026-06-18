@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react
 import { flushSync } from 'react-dom'
 import Moveable from 'react-moveable'
 import Selecto from 'react-selecto'
+import { CornerRotateOverlay } from './CornerRotateOverlay'
 import { useCurrentCanvasStore } from '../../stores/currentCanvas'
 import { useCanvasesStore } from '../../stores/canvases'
 import { useCanvasItemsStore } from '../../stores/canvasItems'
@@ -11,6 +12,55 @@ import { fitViewport, clampScale, DEFAULT_VIEWPORT, ZOOM_STEP } from '../../lib/
 import { CanvasItemNode } from './CanvasItemNode'
 import { CanvasToolbar } from './CanvasToolbar'
 
+// 自定义 hand cursor — 实心：深色底层描边（3.5px）+ 白色前景描边（2px）
+// viewBox 0 0 24 24 → 32×32 cursor；hotspot 在手掌中心
+const HAND_OPEN_PATHS = [
+  'M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2',
+  'M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2',
+  'M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8',
+  'M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15',
+]
+const HAND_GRAB_PATHS = [
+  'M18 11.5V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v1.4',
+  'M14 10V8a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2',
+  'M10 9.9V9a2 2 0 0 0-2-2a2 2 0 0 0-2 2v5',
+  'M6 14a2 2 0 0 0-2-2a2 2 0 0 0-2 2',
+  'M18 11a2 2 0 1 1 4 0v3a8 8 0 0 1-8 8h-4a8 8 0 0 1-8-8 2 2 0 1 1 4 0',
+]
+
+function makeHandCursor(paths: string[], hotX: number, hotY: number): string {
+  const attrs = 'fill="none" stroke-linecap="round" stroke-linejoin="round"'
+  const dark  = paths.map(d => `<path d="${d}" ${attrs} stroke="rgba(0,0,0,0.65)" stroke-width="3.5"/>`).join('')
+  const white = paths.map(d => `<path d="${d}" ${attrs} stroke="white" stroke-width="2"/>`).join('')
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24">` +
+    dark + white +
+    `</svg>`
+  return `url("data:image/svg+xml;base64,${btoa(svg)}") ${hotX} ${hotY}, pointer`
+}
+
+// hotspot 单位是 cursor 图像像素（32px 空间），手掌中心约在 viewBox(11,10) → pixel(15,13)
+const CURSOR_HAND_OPEN = makeHandCursor(HAND_OPEN_PATHS, 15, 13)
+const CURSOR_HAND_GRAB = makeHandCursor(HAND_GRAB_PATHS, 15, 13)
+
+// 自定义 resize cursor — 原始 SVG 为水平双箭头（←→），对应 0° / ew-resize
+const RESIZE_ICON_PATH =
+  'M260.047238 468.21181h498.492952V292.571429l260.096 216.697904-260.096 216.746667v-160.280381H260.047238v160.280381L0 509.269333 260.047238 292.571429v175.640381z'
+
+function makeResizeCursor(deg: number): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 1024 1024">` +
+    `<defs><filter id="s" x="-25%" y="-25%" width="150%" height="150%">` +
+    `<feDropShadow dx="0" dy="30" stdDeviation="35" flood-opacity="0.45"/>` +
+    `</filter></defs>` +
+    `<g transform="rotate(${deg},512,512)">` +
+    `<path d="${RESIZE_ICON_PATH}" fill="white" filter="url(#s)"/>` +
+    `<path d="${RESIZE_ICON_PATH}" fill="none" stroke="rgba(0,0,0,0.5)" stroke-width="30"/>` +
+    `</g>` +
+    `</svg>`
+  return `url("data:image/svg+xml;base64,${btoa(svg)}") 16 16, pointer`
+}
+
 interface Props {
   canvasId: number
 }
@@ -18,11 +68,111 @@ interface Props {
 export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null)
+  const [isResizing, setIsResizing] = useState(false)
+  const resizeCursorStyleRef = useRef<HTMLStyleElement | null>(null)
+
+  const lockResizeCursor = useCallback((inputX: number, inputY: number) => {
+    const cr = containerRef.current?.getBoundingClientRect() ?? new DOMRect()
+    const vp = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
+    const allItems = useCanvasItemsStore.getState().items
+    const selSet = useCanvasSelectionStore.getState().selected
+    const selItems = allItems.filter((it) => selSet.has(it.id))
+    if (selItems.length === 0) return
+    let cx: number, cy: number
+    if (selItems.length === 1) {
+      cx = (selItems[0].x - vp.x) * vp.scale + cr.left
+      cy = (selItems[0].y - vp.y) * vp.scale + cr.top
+    } else {
+      cx = selItems.reduce((s, it) => s + (it.x - vp.x) * vp.scale + cr.left, 0) / selItems.length
+      cy = selItems.reduce((s, it) => s + (it.y - vp.y) * vp.scale + cr.top, 0) / selItems.length
+    }
+    const deg = Math.atan2(inputY - cy, inputX - cx) * (180 / Math.PI)
+    const style = document.createElement('style')
+    style.textContent = `* { cursor: ${makeResizeCursor(((deg % 180) + 180) % 180)} !important; }`
+    document.head.appendChild(style)
+    resizeCursorStyleRef.current = style
+  }, [canvasId])
+
+  const unlockResizeCursor = useCallback(() => {
+    if (resizeCursorStyleRef.current) {
+      document.head.removeChild(resizeCursorStyleRef.current)
+      resizeCursorStyleRef.current = null
+    }
+  }, [])
   const containerCallbackRef = useCallback((el: HTMLDivElement | null) => {
     containerRef.current = el
     setContainerEl(el)
   }, [])
   const moveableRef = useRef<InstanceType<typeof Moveable>>(null)
+
+  // Moveable resize 手柄 hover cursor 替换
+  // 延迟到 rAF 后用 getBoundingClientRect 取手柄实际屏幕中心，与 lockResizeCursor（拖拽时）完全相同的几何计算
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const VALID_DIRS = new Set(['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'])
+
+    const applyToHandle = (el: HTMLElement): void => {
+      if (el.getAttribute('data-rotation') === null) return
+      const cls = el.className || ''
+      // 覆盖可见点（moveable-control）和 hover 区（moveable-around-control），均含 moveable-direction
+      if (!cls.includes('moveable-direction')) return
+      const dir = el.getAttribute('data-direction') ?? ''
+      if (!VALID_DIRS.has(dir)) return  // line 元素或旋转手柄，跳过
+
+      // 延迟到下一帧：MutationObserver 在 layout 前触发，此时 getBoundingClientRect 才准确
+      requestAnimationFrame(() => {
+        if (!el.isConnected) return
+        const hr = el.getBoundingClientRect()
+        if (hr.width === 0 && hr.height === 0) return
+        const hx = hr.left + hr.width / 2
+        const hy = hr.top + hr.height / 2
+
+        const cr = containerRef.current?.getBoundingClientRect()
+        if (!cr) return
+        const vp = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
+        const allItems = useCanvasItemsStore.getState().items
+        const selSet = useCanvasSelectionStore.getState().selected
+        const selItems = allItems.filter((it) => selSet.has(it.id))
+        if (selItems.length === 0) return
+
+        // 与 lockResizeCursor 完全相同的中心计算
+        const cx = selItems.reduce((s, it) => s + (it.x - vp.x) * vp.scale + cr.left, 0) / selItems.length
+        const cy = selItems.reduce((s, it) => s + (it.y - vp.y) * vp.scale + cr.top, 0) / selItems.length
+
+        const deg = Math.atan2(hy - cy, hx - cx) * (180 / Math.PI)
+        el.style.cursor = makeResizeCursor(((deg % 180) + 180) % 180)
+      })
+    }
+
+    const applyToSubtree = (root: Element): void => {
+      if (root instanceof HTMLElement) applyToHandle(root)
+      root.querySelectorAll<HTMLElement>('[data-rotation]').forEach(applyToHandle)
+    }
+
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach((node) => {
+            if (node instanceof Element) applyToSubtree(node)
+          })
+        } else {
+          const el = mutation.target as HTMLElement
+          applyToHandle(el)
+        }
+      }
+    })
+
+    observer.observe(container, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['data-rotation'],
+    })
+
+    return () => observer.disconnect()
+  }, [containerEl])
   const spaceHeldRef = useRef(false)
   const isPanningRef = useRef(false)
   const panStartRef = useRef<{
@@ -110,6 +260,38 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     setViewport(canvasId, fitViewport(targetItems.length > 0 ? targetItems : items, width, height, 0.1))
   }, [canvasId, items, selected, setViewport])
 
+  // 四角旋转提交：把累积旋转增量写入 store
+  const handleRotateCommit = useCallback((totalDeltaRad: number) => {
+    const currentSelected = useCanvasSelectionStore.getState().selected
+    const selectedItemsList = items.filter((it) => currentSelected.has(it.id))
+    if (selectedItemsList.length === 0) return
+
+    if (selectedItemsList.length === 1) {
+      const item = selectedItemsList[0]
+      flushSync(() => {
+        updateItems([{ id: item.id, rotation: item.rotation + totalDeltaRad }])
+      })
+    } else {
+      // 多选：各 item 绕选区重心旋转，位置同步更新
+      const groupCx = selectedItemsList.reduce((s, it) => s + it.x, 0) / selectedItemsList.length
+      const groupCy = selectedItemsList.reduce((s, it) => s + it.y, 0) / selectedItemsList.length
+      const cos = Math.cos(totalDeltaRad)
+      const sin = Math.sin(totalDeltaRad)
+      const patches = selectedItemsList.map((item) => {
+        const dx = item.x - groupCx
+        const dy = item.y - groupCy
+        return {
+          id: item.id,
+          x: groupCx + dx * cos - dy * sin,
+          y: groupCy + dx * sin + dy * cos,
+          rotation: item.rotation + totalDeltaRad,
+        }
+      })
+      flushSync(() => { updateItems(patches) })
+    }
+    moveableRef.current?.updateRect()
+  }, [items, updateItems])
+
   // ── wheel → 离散档位 zoom（以光标为锚点）──
   useEffect(() => {
     const container = containerRef.current
@@ -158,7 +340,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       }
       isPanningRef.current = true
       container.setPointerCapture(e.pointerId)
-      container.style.cursor = 'grabbing'
+      container.style.cursor = CURSOR_HAND_GRAB
     }
 
     const onPointerMove = (e: PointerEvent): void => {
@@ -178,7 +360,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       if (!isPanningRef.current) return
       isPanningRef.current = false
       panStartRef.current = null
-      container.style.cursor = spaceHeldRef.current ? 'grab' : ''
+      container.style.cursor = spaceHeldRef.current ? CURSOR_HAND_OPEN : ''
     }
 
     container.addEventListener('pointerdown', onPointerDown)
@@ -203,7 +385,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
         e.preventDefault()
         spaceHeldRef.current = true
         if (containerRef.current && !isPanningRef.current) {
-          containerRef.current.style.cursor = 'grab'
+          containerRef.current.style.cursor = CURSOR_HAND_OPEN
         }
       } else if (e.key === 'f' || e.key === 'F') {
         handleFit()
@@ -327,7 +509,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           rotatable={true}
           keepRatio={true}
           renderDirections={['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
-          rotationPosition="top"
+          rotationPosition="none"
           snappable={false}
           origin={false}
           // ── 拖动（单选）──
@@ -376,12 +558,19 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             moveableRef.current?.updateRect()
           }}
           // ── 缩放（单选）──
+          onResizeStart={(e) => {
+            setIsResizing(true)
+            const ie = e.inputEvent as PointerEvent
+            lockResizeCursor(ie.clientX, ie.clientY)
+          }}
           onResize={(e) => {
             e.target.style.transform = e.drag.transform
             e.target.style.width = `${e.width}px`
             e.target.style.height = `${e.height}px`
           }}
           onResizeEnd={(e) => {
+            setIsResizing(false)
+            unlockResizeCursor()
             if (!e.isDrag) return
             const el = e.target as HTMLElement
             const itemId = Number(el.dataset.canvasItemId)
@@ -405,6 +594,11 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             moveableRef.current?.updateRect()
           }}
           // ── 缩放（多选）──
+          onResizeGroupStart={(e) => {
+            setIsResizing(true)
+            const ie = e.inputEvent as PointerEvent
+            lockResizeCursor(ie.clientX, ie.clientY)
+          }}
           onResizeGroup={(e) => {
             e.events.forEach((ev) => {
               ev.target.style.transform = ev.drag.transform
@@ -413,6 +607,8 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             })
           }}
           onResizeGroupEnd={(e) => {
+            setIsResizing(false)
+            unlockResizeCursor()
             const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
             const patches = e.events
               .filter((ev) => ev.isDrag)
@@ -491,6 +687,18 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             moveableRef.current?.updateRect()
           }}
         />
+
+      {/* 四角旋转区：选中时在图片实际角点外侧渲染旋转热区 */}
+      {selected.size > 0 && (
+        <CornerRotateOverlay
+          selectedItems={items.filter((it) => selected.has(it.id))}
+          viewport={vp}
+          containerRef={containerRef}
+          moveableRef={moveableRef}
+          onCommitRotation={handleRotateCommit}
+          isResizing={isResizing}
+        />
+      )}
 
       {/* Selecto 框选 */}
       {containerEl && (
