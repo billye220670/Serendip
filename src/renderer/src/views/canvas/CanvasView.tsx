@@ -99,6 +99,28 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       resizeCursorStyleRef.current = null
     }
   }, [])
+
+  // Pan cursor 用全局 * { cursor !important } 注入：容器自身的 style.cursor 会被
+  // 元素的 inline cursor:'default' 和 Moveable 手柄 cursor 盖过，所以 hover 到元素上
+  // 看不到 hand。全局 !important 才能让 Space 平移态的手型覆盖一切。
+  const panCursorStyleRef = useRef<HTMLStyleElement | null>(null)
+  const setPanCursor = useCallback((cursor: string | null) => {
+    if (cursor === null) {
+      if (panCursorStyleRef.current) {
+        document.head.removeChild(panCursorStyleRef.current)
+        panCursorStyleRef.current = null
+      }
+      return
+    }
+    if (!panCursorStyleRef.current) {
+      panCursorStyleRef.current = document.createElement('style')
+      document.head.appendChild(panCursorStyleRef.current)
+    }
+    const text = `* { cursor: ${cursor} !important; }`
+    if (panCursorStyleRef.current.textContent !== text) {
+      panCursorStyleRef.current.textContent = text
+    }
+  }, [])
   const containerCallbackRef = useCallback((el: HTMLDivElement | null) => {
     containerRef.current = el
     setContainerEl(el)
@@ -185,8 +207,18 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const didAutoFitRef = useRef(false)
   // 框选完成后 click 事件不应清空选区
   const selectoJustSelectedRef = useRef(false)
+  // Space+左键 平移结束后的收尾 click 不应清空选区
+  const panJustEndedRef = useRef(false)
   // 未选中元素 pointerDown 后，等待移动阈值才真正启动拖拽
   const pendingDragCleanupRef = useRef<(() => void) | null>(null)
+  // 多选中按下某成员后是否真的拖了整组（用于区分"整组拖拽"与"点选收窄为单选"）
+  const groupDragStartedRef = useRef(false)
+  // 框选模式（仅空白处拖拽生效）：replace 替换 / add 加选(Shift) / subtract 减选(Ctrl)
+  const marqueeModeRef = useRef<'replace' | 'add' | 'subtract'>('replace')
+  // 框选开始时的选区快照（add/subtract 模式以它为基准实时计算）
+  const marqueeStartRef = useRef<Set<number>>(new Set())
+  // 本次框选是否真的发生了拖拽（用于阻止收尾 click 误清空选区）
+  const marqueeActiveRef = useRef(false)
 
   const setCurrent = useCurrentCanvasStore((s) => s.setCurrent)
   const items = useCanvasItemsStore((s) => s.items)
@@ -340,7 +372,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       }
       isPanningRef.current = true
       container.setPointerCapture(e.pointerId)
-      container.style.cursor = CURSOR_HAND_GRAB
+      setPanCursor(CURSOR_HAND_GRAB)
     }
 
     const onPointerMove = (e: PointerEvent): void => {
@@ -360,7 +392,9 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       if (!isPanningRef.current) return
       isPanningRef.current = false
       panStartRef.current = null
-      container.style.cursor = spaceHeldRef.current ? CURSOR_HAND_OPEN : ''
+      // 平移收尾会触发容器 click，标记一下让 onClick 跳过清空选区
+      panJustEndedRef.current = true
+      setPanCursor(spaceHeldRef.current ? CURSOR_HAND_OPEN : null)
     }
 
     container.addEventListener('pointerdown', onPointerDown)
@@ -373,7 +407,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       container.removeEventListener('pointerup', onPointerUp)
       container.removeEventListener('pointercancel', onPointerUp)
     }
-  }, [canvasId, setViewport])
+  }, [canvasId, setViewport, setPanCursor])
 
   // ── Space / F / Esc / Ctrl+A 键盘 ──
   useEffect(() => {
@@ -384,8 +418,8 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       if (e.code === 'Space') {
         e.preventDefault()
         spaceHeldRef.current = true
-        if (containerRef.current && !isPanningRef.current) {
-          containerRef.current.style.cursor = CURSOR_HAND_OPEN
+        if (!isPanningRef.current) {
+          setPanCursor(CURSOR_HAND_OPEN)
         }
       } else if (e.key === 'f' || e.key === 'F') {
         handleFit()
@@ -400,8 +434,8 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     const onKeyUp = (e: KeyboardEvent): void => {
       if (e.code === 'Space') {
         spaceHeldRef.current = false
-        if (!isPanningRef.current && containerRef.current) {
-          containerRef.current.style.cursor = ''
+        if (!isPanningRef.current) {
+          setPanCursor(null)
         }
       }
     }
@@ -411,8 +445,9 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     return () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      setPanCursor(null)
     }
-  }, [handleFit, selectionClear, selectionSelectAll, items])
+  }, [handleFit, selectionClear, selectionSelectAll, items, setPanCursor])
 
   const vp = viewport
 
@@ -436,6 +471,11 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           selectoJustSelectedRef.current = false
           return
         }
+        // Space+左键 平移刚结束时不清（平移是浏览画布，不应改变选区）
+        if (panJustEndedRef.current) {
+          panJustEndedRef.current = false
+          return
+        }
         selectionClear()
       }}
     >
@@ -451,10 +491,20 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           onPointerDown={(e) => {
             // Space 平移 / 非左键 / 修饰键 → 不干涉（onClick 处理修饰键）
             if (spaceHeldRef.current || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return
-            // 已在选区内 → Moveable 原生 listener 处理，不重复触发
-            if (selected.has(item.id)) return
-            // 未选中 → 立即选中，但等到移动超过 8px 再启动拖拽（避免单击误触）
-            flushSync(() => { selectionSelect([item.id]) })
+
+            const isSelected = selected.has(item.id)
+            // 已在单选选区内 → Moveable 单元素手势绑在元素本身，原生 listener 直接处理
+            if (isSelected && selected.size === 1) return
+
+            // 未选中 → 立即单选（替换选区）；已在多选选区内 → 保持整组选区不变
+            // 多选时 Moveable 处于 group 模式，下面手动 dragStart 会触发 onDragGroup
+            // （group 拖拽手势绑在 Moveable 内部 areaElement 上，按在 item 上收不到，必须手动启动）
+            if (!isSelected) {
+              flushSync(() => { selectionSelect([item.id]) })
+            }
+            // 本次按下尚未拖动；若 >8px 启动整组拖拽时再置 true（用于 onClick 区分点选收窄）
+            groupDragStartedRef.current = false
+            // 等到移动超过 8px 再启动拖拽（避免单击误触）
             // 清理上一次未完成的等待
             pendingDragCleanupRef.current?.()
             const startX = e.clientX
@@ -471,6 +521,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             const onMove = (me: PointerEvent): void => {
               if (Math.hypot(me.clientX - startX, me.clientY - startY) > 8) {
                 cleanup()
+                groupDragStartedRef.current = true
                 moveableRef.current?.dragStart(nativeEvent)
               }
             }
@@ -485,10 +536,17 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             if (e.ctrlKey || e.metaKey) {
               selectionToggle(item.id)
             } else if (e.shiftKey) {
-              const idx = items.findIndex((it) => it.id === item.id)
-              useCanvasSelectionStore.getState().selectRange(idx, items)
+              // 画布是二维自由平面，没有"线性区间"概念（区间选择会顺带选中数组下标夹在中间的元素）
+              // Shift+点选 = 把该元素并入选区（只加不减），与 Ctrl 的 toggle 区分
+              const prev = useCanvasSelectionStore.getState().selected
+              const next = new Set(prev)
+              next.add(item.id)
+              useCanvasSelectionStore.setState({ selected: next, anchor: item.id })
+            } else if (!groupDragStartedRef.current && selected.size > 1 && selected.has(item.id)) {
+              // 多选中无修饰键单击某成员（且未拖动整组）→ 收窄为只选该成员
+              selectionSelect([item.id])
             }
-            // 无修饰键的单击选中已在 onPointerDown 完成，这里无需重复
+            // 其余无修饰键单击（单选/未选元素）已在 onPointerDown 完成，这里无需重复
           }}
         />
       ))}
@@ -512,6 +570,10 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           rotationPosition="none"
           snappable={false}
           origin={false}
+          // 多选时整体框的中央拖拽区改为穿透（pointer-events:none），
+          // 否则它盖住选区 AABB 范围，挡住范围内其他未选图的点选。
+          // 拖整组仍走 per-item onPointerDown（按住任一选中图），不依赖此中央区。
+          passDragArea={true}
           // ── 拖动（单选）──
           onDrag={(e) => {
             e.target.style.transform = e.transform
@@ -709,24 +771,59 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           selectByClick={false}
           selectFromInside={false}
           continueSelect={false}
-          toggleContinueSelect={['shift']}
+          onDragStart={(e) => {
+            const inputEvent = e.inputEvent as PointerEvent
+            const target = inputEvent.target as HTMLElement | null
+            // Space 平移中 → 不框选（pan handler 处理）
+            if (spaceHeldRef.current || inputEvent.button !== 0) {
+              e.stop()
+              return
+            }
+            // 按在 Moveable 手柄/控制框上 → 交给 Moveable，不框选
+            if (target && moveableRef.current?.isMoveableElement(target)) {
+              e.stop()
+              return
+            }
+            // 按在画布元素上 → 交给 per-item onPointerDown（拖拽/单选/group 拖拽），不框选
+            // 这是修复"拖拽选中元素时却拉出选区框、并把选区改成单张/误吞新元素"的关键
+            if (target?.closest('.canvas-item')) {
+              e.stop()
+              return
+            }
+            // 空白处框选：记录模式 + 起始选区快照
+            marqueeModeRef.current =
+              inputEvent.ctrlKey || inputEvent.metaKey
+                ? 'subtract'
+                : inputEvent.shiftKey
+                  ? 'add'
+                  : 'replace'
+            marqueeStartRef.current = new Set(useCanvasSelectionStore.getState().selected)
+            marqueeActiveRef.current = false
+          }}
           onSelect={(e) => {
-            const addedIds = e.added.map((el) => Number((el as HTMLElement).dataset.canvasItemId))
-            const removedIds = e.removed.map((el) =>
-              Number((el as HTMLElement).dataset.canvasItemId)
-            )
-            const prev = useCanvasSelectionStore.getState().selected
-            const next = new Set(prev)
-            addedIds.forEach((id) => next.add(id))
-            removedIds.forEach((id) => next.delete(id))
+            marqueeActiveRef.current = true
+            // e.selected = 当前矩形覆盖到的全部目标（continueSelect=false，每次重新计算）
+            const coveredIds = e.selected.map((el) => Number((el as HTMLElement).dataset.canvasItemId))
+            const start = marqueeStartRef.current
+            let next: Set<number>
+            if (marqueeModeRef.current === 'add') {
+              next = new Set(start)
+              coveredIds.forEach((id) => next.add(id))
+            } else if (marqueeModeRef.current === 'subtract') {
+              next = new Set(start)
+              coveredIds.forEach((id) => next.delete(id))
+            } else {
+              next = new Set(coveredIds)
+            }
             useCanvasSelectionStore.setState({ selected: next })
           }}
-          onSelectEnd={(e) => {
-            if (e.selected.length > 0) {
-              // 标记框选刚完成，阻止容器 onClick 误触发清空
+          onSelectEnd={() => {
+            // 真正拖了框 → 阻止收尾 click 清空选区 + 刷新手柄
+            if (marqueeActiveRef.current) {
               selectoJustSelectedRef.current = true
               moveableRef.current?.updateRect()
             }
+            marqueeActiveRef.current = false
           }}
         />
       )}

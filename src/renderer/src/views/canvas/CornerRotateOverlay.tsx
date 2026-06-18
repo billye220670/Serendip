@@ -242,6 +242,51 @@ export function CornerRotateOverlay({
         }
       })
 
+      // 多选旋转：Moveable 的 group 整体框是 AABB（不会跟着转、会撑大缩小）。
+      // 旋转期间藏掉它，改画一个随整组刚体旋转的自定义框（仿 PureRef 手感）——
+      // 取旋转开始时的整组 AABB 作刚体，绕选区中心整体旋转，松手后再交还 Moveable 原生 AABB。
+      let frameEl: HTMLDivElement | null = null
+      let hideBoxStyle: HTMLStyleElement | null = null
+      let frameAABB: { cx: number; cy: number; w: number; h: number; rotCx: number; rotCy: number } | null = null
+      if (!isSingle) {
+        // 初始整组 AABB（屏幕局部坐标，与 item DOM 同一坐标系：(x-vp.x)*scale）
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        for (const it of items) {
+          const cx = (it.x - vp.x) * vp.scale
+          const cy = (it.y - vp.y) * vp.scale
+          const hw = (it.w * vp.scale) / 2
+          const hh = (it.h * vp.scale) / 2
+          const c = Math.cos(it.rotation)
+          const s = Math.sin(it.rotation)
+          for (const [lx, ly] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]] as const) {
+            const px = cx + lx * c - ly * s
+            const py = cy + lx * s + ly * c
+            minX = Math.min(minX, px); minY = Math.min(minY, py)
+            maxX = Math.max(maxX, px); maxY = Math.max(maxY, py)
+          }
+        }
+        frameAABB = {
+          cx: (minX + maxX) / 2,
+          cy: (minY + maxY) / 2,
+          w: maxX - minX,
+          h: maxY - minY,
+          // 旋转支点 = 选区中心（与各 item 绕同一点旋转保持一致）
+          rotCx: (groupCx - vp.x) * vp.scale,
+          rotCy: (groupCy - vp.y) * vp.scale,
+        }
+        hideBoxStyle = document.createElement('style')
+        hideBoxStyle.textContent = '.moveable-control-box { opacity: 0 !important; }'
+        document.head.appendChild(hideBoxStyle)
+        frameEl = document.createElement('div')
+        // 创建时即按初始位置摆好（total=0 → 中心就是 frameAABB.cx/cy），
+        // 否则按下未拖动时会停在容器左上角，拖一下才跳到正确位置
+        frameEl.style.cssText =
+          `position:absolute;left:${frameAABB.cx - frameAABB.w / 2}px;top:${frameAABB.cy - frameAABB.h / 2}px;` +
+          `width:${frameAABB.w}px;height:${frameAABB.h}px;transform-origin:center;` +
+          `border:1px solid var(--color-primary);box-sizing:border-box;pointer-events:none;z-index:3001;`
+        container.appendChild(frameEl)
+      }
+
       const onMove = (me: PointerEvent): void => {
         const { x, y } = centerRef2
         const qCursor = getDirCursor(me.clientX, me.clientY, x, y)
@@ -272,6 +317,16 @@ export function CornerRotateOverlay({
             el.style.transform = `translate(${newScreenCX - screenW / 2}px, ${newScreenCY - screenH / 2}px) rotate(${newRot}rad)`
           }
         }
+        // 自定义框：把初始 AABB 当刚体，中心绕选区中心旋转 + 整体转同角度
+        if (frameEl && frameAABB) {
+          const dxc = frameAABB.cx - frameAABB.rotCx
+          const dyc = frameAABB.cy - frameAABB.rotCy
+          const newCx = frameAABB.rotCx + dxc * cos - dyc * sin
+          const newCy = frameAABB.rotCy + dxc * sin + dyc * cos
+          frameEl.style.left = `${newCx - frameAABB.w / 2}px`
+          frameEl.style.top = `${newCy - frameAABB.h / 2}px`
+          frameEl.style.transform = `rotate(${total}rad)`
+        }
         moveableRef.current?.updateRect()
       }
 
@@ -287,6 +342,9 @@ export function CornerRotateOverlay({
         if (Math.abs(totalDelta) > 0.001) {
           onCommitRef.current(totalDelta)
         }
+        // 提交后再移除自定义框 + 交还 Moveable 框，避免松手瞬间闪出 AABB 一帧
+        if (frameEl) { frameEl.remove(); frameEl = null }
+        if (hideBoxStyle) { document.head.removeChild(hideBoxStyle); hideBoxStyle = null }
       }
 
       window.addEventListener('pointermove', onMove)

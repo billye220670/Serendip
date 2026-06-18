@@ -155,6 +155,13 @@ body {
   display: none !important;
 }
 
+/* 画布 Moveable：控制框线条 + 手柄点统一用主题强调色（与自定义旋转框一致）
+   react-moveable 运行时把 --moveable-color:#4af 注入到 .moveable-control-box，
+   其 style 标签晚于本文件插入，同特异性下会盖过我们 → 自定义属性加 !important 才稳。 */
+.moveable-control-box {
+  --moveable-color: var(--color-primary) !important;
+}
+
 /* 评审标题确认反馈：punch + fade out */
 @keyframes review-label-punch {
   from {
