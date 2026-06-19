@@ -42,7 +42,7 @@ export function CurrentCanvasChip({ style }: CurrentCanvasChipProps): React.JSX.
           'flex items-center gap-2 rounded-lg border pl-4 pr-0 py-2.5 text-xs select-none cursor-pointer transition-colors',
           isCanvasView
             ? 'border-primary bg-primary/10 hover:bg-primary/15'
-            : 'border-border bg-muted/60 hover:bg-muted'
+            : 'border-[rgba(0,0,0,0.18)] hover:bg-[rgba(0,0,0,0.14)]'
         )}
         style={style}
         onClick={() => {
@@ -55,14 +55,17 @@ export function CurrentCanvasChip({ style }: CurrentCanvasChipProps): React.JSX.
       >
         <Presentation className={clsx('w-3.5 h-3.5 flex-shrink-0', isCanvasView ? 'text-primary' : 'text-muted-foreground')} />
         <span className={clsx('font-medium truncate flex-1', isCanvasView ? 'text-primary' : 'text-foreground')}>{currentCanvas.name}</span>
-        <Tooltip text="清除当前画布" side="bottom">
-          <button
-            className="self-stretch flex items-center pl-2 pr-4 transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
-            onClick={handleClose}
-          >
-            <X className="w-3 h-3" />
-          </button>
-        </Tooltip>
+        {/* stopPropagation 阻止外层 Tooltip（前往画布）的 onMouseEnter 被触发 */}
+        <span onMouseEnter={(e) => e.stopPropagation()}>
+          <Tooltip text="清除当前画布" side="bottom">
+            <button
+              className="self-stretch flex items-center pl-2 pr-4 transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+              onClick={handleClose}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </Tooltip>
+        </span>
       </div>
     </Tooltip>
   )

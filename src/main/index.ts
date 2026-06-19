@@ -38,7 +38,7 @@ function createWindow(): void {
       ? {
           titleBarOverlay: {
             // 初始值走亮色主题（glass-over-background 的温暖近白），切主题时由渲染层通过 IPC 重设
-            color: '#f5f4f1',
+            color: '#d9d6d3',
             symbolColor: '#444444',
             height: 64
           }

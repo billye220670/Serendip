@@ -10,7 +10,14 @@ import { useCanvasViewportStore, flushViewportNow } from '../../stores/canvasVie
 import { useCanvasSelectionStore } from '../../stores/canvasSelection'
 import { useCanvasUndoStore } from '../../stores/canvasUndo'
 import { useUIStore } from '../../stores/ui'
-import { fitViewport, clampScale, DEFAULT_VIEWPORT, ZOOM_STEP } from '../../lib/canvasMath'
+import {
+  fitViewport,
+  clampScale,
+  DEFAULT_VIEWPORT,
+  ZOOM_STEP,
+  screenToWorld
+} from '../../lib/canvasMath'
+import { cropItem, scaleClipContent, parseClipData } from '../../lib/clipPolygon'
 import { navigateDirection, panToItem } from '../../lib/canvasNavigate'
 import { CURSOR_HAND_OPEN, CURSOR_HAND_GRAB } from '../../lib/handCursor'
 import { CanvasItemNode } from './CanvasItemNode'
@@ -43,35 +50,66 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null)
   const [isResizing, setIsResizing] = useState(false)
+  // 裁剪拖拽进行中的屏幕框坐标（用于显示虚线矩形）
+  const [cropDragRect, setCropDragRect] = useState<{
+    x: number
+    y: number
+    w: number
+    h: number
+  } | null>(null)
   const resizeCursorStyleRef = useRef<HTMLStyleElement | null>(null)
 
-  const lockResizeCursor = useCallback((inputX: number, inputY: number) => {
-    const cr = containerRef.current?.getBoundingClientRect() ?? new DOMRect()
-    const vp = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
-    const allItems = useCanvasItemsStore.getState().items
-    const selSet = useCanvasSelectionStore.getState().selected
-    const selItems = allItems.filter((it) => selSet.has(it.id))
-    if (selItems.length === 0) return
-    let cx: number, cy: number
-    if (selItems.length === 1) {
-      cx = (selItems[0].x - vp.x) * vp.scale + cr.left
-      cy = (selItems[0].y - vp.y) * vp.scale + cr.top
-    } else {
-      cx = selItems.reduce((s, it) => s + (it.x - vp.x) * vp.scale + cr.left, 0) / selItems.length
-      cy = selItems.reduce((s, it) => s + (it.y - vp.y) * vp.scale + cr.top, 0) / selItems.length
-    }
-    const deg = Math.atan2(inputY - cy, inputX - cx) * (180 / Math.PI)
-    const style = document.createElement('style')
-    style.textContent = `* { cursor: ${makeResizeCursor(((deg % 180) + 180) % 180)} !important; }`
-    document.head.appendChild(style)
-    resizeCursorStyleRef.current = style
-  }, [canvasId])
+  const lockResizeCursor = useCallback(
+    (inputX: number, inputY: number) => {
+      const cr = containerRef.current?.getBoundingClientRect() ?? new DOMRect()
+      const vp = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
+      const allItems = useCanvasItemsStore.getState().items
+      const selSet = useCanvasSelectionStore.getState().selected
+      const selItems = allItems.filter((it) => selSet.has(it.id))
+      if (selItems.length === 0) return
+      let cx: number, cy: number
+      if (selItems.length === 1) {
+        cx = (selItems[0].x - vp.x) * vp.scale + cr.left
+        cy = (selItems[0].y - vp.y) * vp.scale + cr.top
+      } else {
+        cx = selItems.reduce((s, it) => s + (it.x - vp.x) * vp.scale + cr.left, 0) / selItems.length
+        cy = selItems.reduce((s, it) => s + (it.y - vp.y) * vp.scale + cr.top, 0) / selItems.length
+      }
+      const deg = Math.atan2(inputY - cy, inputX - cx) * (180 / Math.PI)
+      const style = document.createElement('style')
+      style.textContent = `* { cursor: ${makeResizeCursor(((deg % 180) + 180) % 180)} !important; }`
+      document.head.appendChild(style)
+      resizeCursorStyleRef.current = style
+    },
+    [canvasId]
+  )
 
   const unlockResizeCursor = useCallback(() => {
     if (resizeCursorStyleRef.current) {
       document.head.removeChild(resizeCursorStyleRef.current)
       resizeCursorStyleRef.current = null
     }
+  }, [])
+
+  // resize 拖拽期间实时同步裁剪元素的内容包裹层尺寸/位置
+  // （clip-path 是 % 随框自动缩放，但内容层是像素定位、只在 React 渲染时更新，
+  //  故拖拽中需手动按新框尺寸等比更新，否则只有 mask 缩放、图不缩放）
+  const syncContentResize = useCallback((el: HTMLElement, width: number, height: number) => {
+    const contentEl = el.querySelector<HTMLElement>('.canvas-content')
+    if (!contentEl) return
+    const itemId = Number(el.dataset.canvasItemId)
+    const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+    if (!item || item.w === 0 || item.h === 0) return
+    const data = parseClipData(item.clipPolygon)
+    if (!data) return
+    const c = data.content
+    // cw = content.w(世界) × width(px) / item.w(世界) = px，scale 已含在 width 中
+    const cw = (c.w * width) / item.w
+    const ch = (c.h * height) / item.h
+    contentEl.style.width = `${cw}px`
+    contentEl.style.height = `${ch}px`
+    contentEl.style.left = `${width / 2 + (c.cx * width) / item.w - cw / 2}px`
+    contentEl.style.top = `${height / 2 + (c.cy * height) / item.h - ch / 2}px`
   }, [])
 
   // Pan cursor 用全局 * { cursor !important } 注入：容器自身的 style.cursor 会被
@@ -115,7 +153,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       // 覆盖可见点（moveable-control）和 hover 区（moveable-around-control），均含 moveable-direction
       if (!cls.includes('moveable-direction')) return
       const dir = el.getAttribute('data-direction') ?? ''
-      if (!VALID_DIRS.has(dir)) return  // line 元素或旋转手柄，跳过
+      if (!VALID_DIRS.has(dir)) return // line 元素或旋转手柄，跳过
 
       // 延迟到下一帧：MutationObserver 在 layout 前触发，此时 getBoundingClientRect 才准确
       requestAnimationFrame(() => {
@@ -134,8 +172,10 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
         if (selItems.length === 0) return
 
         // 与 lockResizeCursor 完全相同的中心计算
-        const cx = selItems.reduce((s, it) => s + (it.x - vp.x) * vp.scale + cr.left, 0) / selItems.length
-        const cy = selItems.reduce((s, it) => s + (it.y - vp.y) * vp.scale + cr.top, 0) / selItems.length
+        const cx =
+          selItems.reduce((s, it) => s + (it.x - vp.x) * vp.scale + cr.left, 0) / selItems.length
+        const cy =
+          selItems.reduce((s, it) => s + (it.y - vp.y) * vp.scale + cr.top, 0) / selItems.length
 
         const deg = Math.atan2(hy - cy, hx - cx) * (180 / Math.PI)
         el.style.cursor = makeResizeCursor(((deg % 180) + 180) % 180)
@@ -164,7 +204,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ['data-rotation'],
+      attributeFilter: ['data-rotation']
     })
 
     return () => observer.disconnect()
@@ -194,7 +234,21 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   // 本次框选是否真的发生了拖拽（用于阻止收尾 click 误清空选区）
   const marqueeActiveRef = useRef(false)
   // 手势（拖移/缩放/旋转）开始前的 item 快照，用于 undo 的 before 状态
-  const gestureSnapshotRef = useRef<Map<number, { x: number; y: number; w: number; h: number; rotation: number }>>(new Map())
+  const gestureSnapshotRef = useRef<
+    Map<number, { x: number; y: number; w: number; h: number; rotation: number }>
+  >(new Map())
+
+  // ── 裁剪（C 键 + 拖拽）──
+  const cKeyHeldRef = useRef(false)
+  const isCroppingRef = useRef(false)
+  const cropRectRef = useRef<{
+    startX: number
+    startY: number
+    currentX: number
+    currentY: number
+  } | null>(null)
+  // 裁剪拖拽结束后的收尾 click 不应清空选区
+  const cropJustEndedRef = useRef(false)
 
   const setCurrent = useCurrentCanvasStore((s) => s.setCurrent)
   const items = useCanvasItemsStore((s) => s.items)
@@ -264,56 +318,67 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     if (!container || items.length === 0) return
     const { width, height } = container.getBoundingClientRect()
     const targetItems = selected.size > 0 ? items.filter((it) => selected.has(it.id)) : items
-    setViewport(canvasId, fitViewport(targetItems.length > 0 ? targetItems : items, width, height, 0.1))
+    setViewport(
+      canvasId,
+      fitViewport(targetItems.length > 0 ? targetItems : items, width, height, 0.1)
+    )
   }, [canvasId, items, selected, setViewport])
 
   // 四角旋转提交：把累积旋转增量写入 store
-  const handleRotateCommit = useCallback((totalDeltaRad: number) => {
-    const currentSelected = useCanvasSelectionStore.getState().selected
-    const selectedItemsList = items.filter((it) => currentSelected.has(it.id))
-    if (selectedItemsList.length === 0) return
+  const handleRotateCommit = useCallback(
+    (totalDeltaRad: number) => {
+      const currentSelected = useCanvasSelectionStore.getState().selected
+      const selectedItemsList = items.filter((it) => currentSelected.has(it.id))
+      if (selectedItemsList.length === 0) return
 
-    let afterPatches: CanvasItemPatch[]
+      let afterPatches: CanvasItemPatch[]
 
-    if (selectedItemsList.length === 1) {
-      const item = selectedItemsList[0]
-      afterPatches = [{ id: item.id, rotation: item.rotation + totalDeltaRad }]
-    } else {
-      const groupCx = selectedItemsList.reduce((s, it) => s + it.x, 0) / selectedItemsList.length
-      const groupCy = selectedItemsList.reduce((s, it) => s + it.y, 0) / selectedItemsList.length
-      const cos = Math.cos(totalDeltaRad)
-      const sin = Math.sin(totalDeltaRad)
-      afterPatches = selectedItemsList.map((item) => {
-        const dx = item.x - groupCx
-        const dy = item.y - groupCy
-        return {
-          id: item.id,
-          x: groupCx + dx * cos - dy * sin,
-          y: groupCy + dx * sin + dy * cos,
-          rotation: item.rotation + totalDeltaRad,
+      if (selectedItemsList.length === 1) {
+        const item = selectedItemsList[0]
+        afterPatches = [{ id: item.id, rotation: item.rotation + totalDeltaRad }]
+      } else {
+        const groupCx = selectedItemsList.reduce((s, it) => s + it.x, 0) / selectedItemsList.length
+        const groupCy = selectedItemsList.reduce((s, it) => s + it.y, 0) / selectedItemsList.length
+        const cos = Math.cos(totalDeltaRad)
+        const sin = Math.sin(totalDeltaRad)
+        afterPatches = selectedItemsList.map((item) => {
+          const dx = item.x - groupCx
+          const dy = item.y - groupCy
+          return {
+            id: item.id,
+            x: groupCx + dx * cos - dy * sin,
+            y: groupCy + dx * sin + dy * cos,
+            rotation: item.rotation + totalDeltaRad
+          }
+        })
+      }
+
+      const beforePatches: CanvasItemPatch[] = selectedItemsList.map((it) => ({
+        id: it.id,
+        x: it.x,
+        y: it.y,
+        rotation: it.rotation
+      }))
+      const finalAfter = afterPatches
+
+      flushSync(() => {
+        updateItems(finalAfter)
+      })
+      moveableRef.current?.updateRect()
+
+      useCanvasUndoStore.getState().push({
+        apply: () => {
+          useCanvasItemsStore.getState().updateItems(finalAfter)
+          moveableRef.current?.updateRect()
+        },
+        revert: () => {
+          useCanvasItemsStore.getState().updateItems(beforePatches)
+          moveableRef.current?.updateRect()
         }
       })
-    }
-
-    const beforePatches: CanvasItemPatch[] = selectedItemsList.map((it) => ({
-      id: it.id, x: it.x, y: it.y, rotation: it.rotation,
-    }))
-    const finalAfter = afterPatches
-
-    flushSync(() => { updateItems(finalAfter) })
-    moveableRef.current?.updateRect()
-
-    useCanvasUndoStore.getState().push({
-      apply: () => {
-        useCanvasItemsStore.getState().updateItems(finalAfter)
-        moveableRef.current?.updateRect()
-      },
-      revert: () => {
-        useCanvasItemsStore.getState().updateItems(beforePatches)
-        moveableRef.current?.updateRect()
-      },
-    })
-  }, [items, updateItems])
+    },
+    [items, updateItems]
+  )
 
   // ── wheel → 离散档位 zoom（以光标为锚点）──
   useEffect(() => {
@@ -400,27 +465,161 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     }
   }, [canvasId, setViewport, setPanCursor])
 
+  // ── 裁剪拖拽（C 键按住 + 左键拖拽画矩形）──
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    const onPointerDown = (e: PointerEvent): void => {
+      if (!cKeyHeldRef.current || e.button !== 0 || spaceHeldRef.current) return
+      // 未选中任何元素 → 裁剪无目标，忽略
+      if (useCanvasSelectionStore.getState().selected.size === 0) return
+
+      e.preventDefault()
+      const rect = container.getBoundingClientRect()
+      const relX = e.clientX - rect.left
+      const relY = e.clientY - rect.top
+      cropRectRef.current = { startX: relX, startY: relY, currentX: relX, currentY: relY }
+      isCroppingRef.current = true
+      container.setPointerCapture(e.pointerId)
+      setCropDragRect({ x: relX, y: relY, w: 0, h: 0 })
+    }
+
+    const onPointerMove = (e: PointerEvent): void => {
+      if (!isCroppingRef.current || !cropRectRef.current) return
+      const rect = container.getBoundingClientRect()
+      const relX = e.clientX - rect.left
+      const relY = e.clientY - rect.top
+      cropRectRef.current.currentX = relX
+      cropRectRef.current.currentY = relY
+      setCropDragRect({
+        x: Math.min(cropRectRef.current.startX, relX),
+        y: Math.min(cropRectRef.current.startY, relY),
+        w: Math.abs(relX - cropRectRef.current.startX),
+        h: Math.abs(relY - cropRectRef.current.startY)
+      })
+    }
+
+    const onPointerUp = (): void => {
+      if (!isCroppingRef.current) return
+      isCroppingRef.current = false
+      setCropDragRect(null)
+      const cr = cropRectRef.current
+      cropRectRef.current = null
+      // 收尾 click 不应清空选区
+      cropJustEndedRef.current = true
+      // C 已松开时恢复光标
+      if (!cKeyHeldRef.current) {
+        setPanCursor(spaceHeldRef.current ? CURSOR_HAND_OPEN : null)
+      }
+
+      if (!cr) return
+      const dragW = Math.abs(cr.currentX - cr.startX)
+      const dragH = Math.abs(cr.currentY - cr.startY)
+      if (dragW < 4 || dragH < 4) return // 拖拽过小，忽略
+
+      // 屏幕坐标 → 世界坐标
+      const vp = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
+      const [worldMinX, worldMinY] = screenToWorld(
+        Math.min(cr.startX, cr.currentX),
+        Math.min(cr.startY, cr.currentY),
+        vp
+      )
+      const [worldMaxX, worldMaxY] = screenToWorld(
+        Math.max(cr.startX, cr.currentX),
+        Math.max(cr.startY, cr.currentY),
+        vp
+      )
+      const worldRect = { minX: worldMinX, minY: worldMinY, maxX: worldMaxX, maxY: worldMaxY }
+
+      const selSet = useCanvasSelectionStore.getState().selected
+      const allItems = useCanvasItemsStore.getState().items
+      const selItems = allItems.filter((it) => selSet.has(it.id))
+      if (selItems.length === 0) return
+
+      const afterPatches: CanvasItemPatch[] = []
+      const beforePatches: CanvasItemPatch[] = []
+      for (const item of selItems) {
+        const result = cropItem(item, worldRect)
+        if (result === null) continue // 与裁剪框无交集，跳过
+        beforePatches.push({
+          id: item.id,
+          x: item.x,
+          y: item.y,
+          w: item.w,
+          h: item.h,
+          rotation: item.rotation,
+          clipPolygon: item.clipPolygon
+        })
+        afterPatches.push({
+          id: item.id,
+          x: result.x,
+          y: result.y,
+          w: result.w,
+          h: result.h,
+          rotation: result.rotation,
+          clipPolygon: result.clipPolygon
+        })
+      }
+      if (afterPatches.length === 0) return
+
+      flushSync(() => {
+        updateItems(afterPatches)
+      })
+      // 操纵框立即适配新 AABB；选中状态保留（不清空）
+      moveableRef.current?.updateRect()
+
+      const fa = afterPatches
+      const fb = beforePatches
+      useCanvasUndoStore.getState().push({
+        apply: () => {
+          useCanvasItemsStore.getState().updateItems(fa)
+          moveableRef.current?.updateRect()
+        },
+        revert: () => {
+          useCanvasItemsStore.getState().updateItems(fb)
+          moveableRef.current?.updateRect()
+        }
+      })
+    }
+
+    container.addEventListener('pointerdown', onPointerDown)
+    container.addEventListener('pointermove', onPointerMove)
+    container.addEventListener('pointerup', onPointerUp)
+    container.addEventListener('pointercancel', onPointerUp)
+    return () => {
+      container.removeEventListener('pointerdown', onPointerDown)
+      container.removeEventListener('pointermove', onPointerMove)
+      container.removeEventListener('pointerup', onPointerUp)
+      container.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [canvasId, updateItems, setPanCursor])
+
   // ── Space / F / Esc / Ctrl+A / Delete / [/] 层级 / Ctrl+Z/Y / 方向键 ──
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return
 
-      if (e.code === 'Space') {
+      if (e.code === 'KeyC' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        // 按住 C 进入裁剪拖拽态；未选中任何元素时仅不改变光标（拖拽时再次校验）
+        e.preventDefault()
+        cKeyHeldRef.current = true
+        if (useCanvasSelectionStore.getState().selected.size > 0) {
+          setPanCursor('crosshair')
+        }
+        return
+      } else if (e.code === 'Space') {
         e.preventDefault()
         spaceHeldRef.current = true
         if (!isPanningRef.current) setPanCursor(CURSOR_HAND_OPEN)
-
       } else if (e.key === 'f' || e.key === 'F') {
         handleFit()
-
       } else if (e.key === 'Escape') {
         selectionClear()
-
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault()
         useCanvasSelectionStore.getState().selectAll(useCanvasItemsStore.getState().items)
-
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         const selIds = Array.from(useCanvasSelectionStore.getState().selected)
@@ -447,16 +646,21 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             },
             revert: async () => {
               const inputs = snapshots.map((it) => ({
-                fileId: it.fileId, x: it.x, y: it.y, w: it.w, h: it.h, z: it.z, rotation: it.rotation,
+                fileId: it.fileId,
+                x: it.x,
+                y: it.y,
+                w: it.w,
+                h: it.h,
+                z: it.z,
+                rotation: it.rotation
               }))
               const newIds = await window.api.addItemsToCanvas(canvasId, inputs)
               restoredIdsRef.current = newIds
               useCanvasItemsStore.getState().bump()
               moveableRef.current?.updateRect()
-            },
+            }
           })
         })()
-
       } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.code === 'BracketRight') {
         e.preventDefault()
         applyZOrder('bringToFront')
@@ -469,22 +673,35 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       } else if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'BracketLeft') {
         e.preventDefault()
         applyZOrder('sendBackward')
-
       } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
         e.preventDefault()
-        void useCanvasUndoStore.getState().undo().then(() => {
-          requestAnimationFrame(() => { moveableRef.current?.updateRect() })
-        })
+        void useCanvasUndoStore
+          .getState()
+          .undo()
+          .then(() => {
+            requestAnimationFrame(() => {
+              moveableRef.current?.updateRect()
+            })
+          })
       } else if (
         (e.ctrlKey || e.metaKey) &&
         (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))
       ) {
         e.preventDefault()
-        void useCanvasUndoStore.getState().redo().then(() => {
-          requestAnimationFrame(() => { moveableRef.current?.updateRect() })
-        })
-
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        void useCanvasUndoStore
+          .getState()
+          .redo()
+          .then(() => {
+            requestAnimationFrame(() => {
+              moveableRef.current?.updateRect()
+            })
+          })
+      } else if (
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight' ||
+        e.key === 'ArrowUp' ||
+        e.key === 'ArrowDown'
+      ) {
         e.preventDefault()
         const allItems = useCanvasItemsStore.getState().items
         const selSet = useCanvasSelectionStore.getState().selected
@@ -494,7 +711,11 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
         const vp = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
         const newId = navigateDirection(
           e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown',
-          allItems, selSet, vp, width, height,
+          allItems,
+          selSet,
+          vp,
+          width,
+          height
         )
         if (newId === null) return
         useCanvasSelectionStore.getState().select([newId])
@@ -503,14 +724,21 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           const newVp = panToItem(newItem, vp, width, height)
           if (newVp) useCanvasViewportStore.getState().setViewport(canvasId, newVp)
         }
-        requestAnimationFrame(() => { moveableRef.current?.updateRect() })
+        requestAnimationFrame(() => {
+          moveableRef.current?.updateRect()
+        })
       }
     }
 
     const onKeyUp = (e: KeyboardEvent): void => {
       if (e.code === 'Space') {
         spaceHeldRef.current = false
-        if (!isPanningRef.current) setPanCursor(null)
+        if (!isPanningRef.current && !cKeyHeldRef.current) setPanCursor(null)
+      } else if (e.code === 'KeyC') {
+        cKeyHeldRef.current = false
+        if (!isCroppingRef.current) {
+          setPanCursor(spaceHeldRef.current ? CURSOR_HAND_OPEN : null)
+        }
       }
     }
 
@@ -526,59 +754,70 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const vp = viewport
 
   // 层级操作（[/] 和 Ctrl+Shift+[/]）：计算 z 补丁 + push undo
-  const applyZOrder = useCallback((
-    mode: 'bringForward' | 'sendBackward' | 'bringToFront' | 'sendToBack'
-  ): void => {
-    const selSet = useCanvasSelectionStore.getState().selected
-    const allItems = useCanvasItemsStore.getState().items
-    const selItems = allItems.filter((it) => selSet.has(it.id))
-    if (selItems.length === 0) return
+  const applyZOrder = useCallback(
+    (mode: 'bringForward' | 'sendBackward' | 'bringToFront' | 'sendToBack'): void => {
+      const selSet = useCanvasSelectionStore.getState().selected
+      const allItems = useCanvasItemsStore.getState().items
+      const selItems = allItems.filter((it) => selSet.has(it.id))
+      if (selItems.length === 0) return
 
-    let patches: CanvasItemPatch[] = []
-    const nonSelItems = allItems.filter((it) => !selSet.has(it.id))
+      let patches: CanvasItemPatch[] = []
+      const nonSelItems = allItems.filter((it) => !selSet.has(it.id))
 
-    if (mode === 'bringToFront' || (mode === 'bringForward' && selItems.length > 1)) {
-      const maxZ = nonSelItems.length > 0 ? Math.max(...nonSelItems.map((it) => it.z)) : 0
-      const sorted = [...selItems].sort((a, b) => a.z - b.z)
-      patches = sorted.map((item, i) => ({ id: item.id, z: maxZ + i + 1 }))
-    } else if (mode === 'sendToBack' || (mode === 'sendBackward' && selItems.length > 1)) {
-      const minZ = nonSelItems.length > 0 ? Math.min(...nonSelItems.map((it) => it.z)) : 0
-      const sorted = [...selItems].sort((a, b) => b.z - a.z)
-      patches = sorted.map((item, i) => ({ id: item.id, z: minZ - i - 1 }))
-    } else if (mode === 'bringForward') {
-      const item = selItems[0]
-      const above = allItems.filter((it) => it.id !== item.id && it.z > item.z).sort((a, b) => a.z - b.z)[0]
-      if (!above) return
-      patches = [{ id: item.id, z: above.z }, { id: above.id, z: item.z }]
-    } else {
-      const item = selItems[0]
-      const below = allItems.filter((it) => it.id !== item.id && it.z < item.z).sort((a, b) => b.z - a.z)[0]
-      if (!below) return
-      patches = [{ id: item.id, z: below.z }, { id: below.id, z: item.z }]
-    }
+      if (mode === 'bringToFront' || (mode === 'bringForward' && selItems.length > 1)) {
+        const maxZ = nonSelItems.length > 0 ? Math.max(...nonSelItems.map((it) => it.z)) : 0
+        const sorted = [...selItems].sort((a, b) => a.z - b.z)
+        patches = sorted.map((item, i) => ({ id: item.id, z: maxZ + i + 1 }))
+      } else if (mode === 'sendToBack' || (mode === 'sendBackward' && selItems.length > 1)) {
+        const minZ = nonSelItems.length > 0 ? Math.min(...nonSelItems.map((it) => it.z)) : 0
+        const sorted = [...selItems].sort((a, b) => b.z - a.z)
+        patches = sorted.map((item, i) => ({ id: item.id, z: minZ - i - 1 }))
+      } else if (mode === 'bringForward') {
+        const item = selItems[0]
+        const above = allItems
+          .filter((it) => it.id !== item.id && it.z > item.z)
+          .sort((a, b) => a.z - b.z)[0]
+        if (!above) return
+        patches = [
+          { id: item.id, z: above.z },
+          { id: above.id, z: item.z }
+        ]
+      } else {
+        const item = selItems[0]
+        const below = allItems
+          .filter((it) => it.id !== item.id && it.z < item.z)
+          .sort((a, b) => b.z - a.z)[0]
+        if (!below) return
+        patches = [
+          { id: item.id, z: below.z },
+          { id: below.id, z: item.z }
+        ]
+      }
 
-    if (patches.length === 0) return
+      if (patches.length === 0) return
 
-    const beforePatches: CanvasItemPatch[] = patches.map((p) => ({
-      id: p.id,
-      z: allItems.find((it) => it.id === p.id)?.z ?? 0,
-    }))
-    const finalPatches = patches
+      const beforePatches: CanvasItemPatch[] = patches.map((p) => ({
+        id: p.id,
+        z: allItems.find((it) => it.id === p.id)?.z ?? 0
+      }))
+      const finalPatches = patches
 
-    useCanvasItemsStore.getState().updateItems(finalPatches)
-    moveableRef.current?.updateRect()
+      useCanvasItemsStore.getState().updateItems(finalPatches)
+      moveableRef.current?.updateRect()
 
-    useCanvasUndoStore.getState().push({
-      apply: () => {
-        useCanvasItemsStore.getState().updateItems(finalPatches)
-        moveableRef.current?.updateRect()
-      },
-      revert: () => {
-        useCanvasItemsStore.getState().updateItems(beforePatches)
-        moveableRef.current?.updateRect()
-      },
-    })
-  }, [])
+      useCanvasUndoStore.getState().push({
+        apply: () => {
+          useCanvasItemsStore.getState().updateItems(finalPatches)
+          moveableRef.current?.updateRect()
+        },
+        revert: () => {
+          useCanvasItemsStore.getState().updateItems(beforePatches)
+          moveableRef.current?.updateRect()
+        }
+      })
+    },
+    []
+  )
 
   // 选中后自动置顶：保留选中项之间的相对 z 顺序，不压撤销栈
   useEffect(() => {
@@ -611,6 +850,11 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       style={{ touchAction: 'none' }}
       onClick={() => {
         // 点击容器空白处清空选区
+        // 裁剪拖拽刚完成时不清（onPointerUp 会设 cropJustEndedRef）
+        if (cropJustEndedRef.current) {
+          cropJustEndedRef.current = false
+          return
+        }
         // 框选刚完成时不清（onSelectEnd 会设 selectoJustSelectedRef）
         if (selectoJustSelectedRef.current) {
           selectoJustSelectedRef.current = false
@@ -635,7 +879,15 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           containerRef={containerRef}
           onPointerDown={(e) => {
             // Space 平移 / 非左键 / 修饰键 → 不干涉（onClick 处理修饰键）
-            if (spaceHeldRef.current || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return
+            if (
+              spaceHeldRef.current ||
+              cKeyHeldRef.current ||
+              e.button !== 0 ||
+              e.ctrlKey ||
+              e.metaKey ||
+              e.shiftKey
+            )
+              return
 
             const isSelected = selected.has(item.id)
             // 已在单选选区内 → Moveable 单元素手势绑在元素本身，原生 listener 直接处理
@@ -645,7 +897,9 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
             // 多选时 Moveable 处于 group 模式，下面手动 dragStart 会触发 onDragGroup
             // （group 拖拽手势绑在 Moveable 内部 areaElement 上，按在 item 上收不到，必须手动启动）
             if (!isSelected) {
-              flushSync(() => { selectionSelect([item.id]) })
+              flushSync(() => {
+                selectionSelect([item.id])
+              })
             }
             // 本次按下尚未拖动；若 >8px 启动整组拖拽时再置 true（用于 onClick 区分点选收窄）
             groupDragStartedRef.current = false
@@ -705,276 +959,400 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
 
       {/* Moveable 变换手柄（始终挂载，target=[] 时不显示手柄） */}
       <Moveable
-          ref={moveableRef}
-          target={selectedElements}
-          draggable={true}
-          resizable={true}
-          rotatable={true}
-          keepRatio={true}
-          renderDirections={['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
-          rotationPosition="none"
-          snappable={false}
-          origin={false}
-          // 多选时整体框的中央拖拽区改为穿透（pointer-events:none），
-          // 否则它盖住选区 AABB 范围，挡住范围内其他未选图的点选。
-          // 拖整组仍走 per-item onPointerDown（按住任一选中图），不依赖此中央区。
-          passDragArea={true}
-          // ── 拖动（单选）──
-          onDragStart={(e) => {
-            const el = e.target as HTMLElement
-            const itemId = Number(el.dataset.canvasItemId)
-            const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
-            if (item) gestureSnapshotRef.current = new Map([[itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]])
-          }}
-          onDrag={(e) => {
-            e.target.style.transform = e.transform
-          }}
-          onDragEnd={(e) => {
-            if (!e.isDrag) return
-            const el = e.target as HTMLElement
-            const itemId = Number(el.dataset.canvasItemId)
-            const item = items.find((it) => it.id === itemId)
-            if (!item) return
-            const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const distX = (e.lastEvent?.dist?.[0] ?? 0) / scale
-            const distY = (e.lastEvent?.dist?.[1] ?? 0) / scale
-            const afterPatches = [{ id: itemId, x: item.x + distX, y: item.y + distY }]
-            const snap = gestureSnapshotRef.current.get(itemId)
-            const beforePatches = snap ? [{ id: itemId, x: snap.x, y: snap.y }] : null
-            flushSync(() => { updateItems(afterPatches) })
-            moveableRef.current?.updateRect()
-            if (beforePatches) {
-              const fa = afterPatches
-              useCanvasUndoStore.getState().push({
-                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
-                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
-              })
-            }
-          }}
-          // ── 拖动（多选）──
-          onDragGroupStart={(e) => {
-            const snap = new Map<number, { x: number; y: number; w: number; h: number; rotation: number }>()
-            for (const ev of e.events) {
-              const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
-              const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
-              if (item) snap.set(itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation })
-            }
-            gestureSnapshotRef.current = snap
-          }}
-          onDragGroup={(e) => {
-            e.events.forEach((ev) => {
-              ev.target.style.transform = ev.transform
+        ref={moveableRef}
+        target={selectedElements}
+        draggable={true}
+        resizable={true}
+        rotatable={true}
+        keepRatio={true}
+        renderDirections={['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
+        rotationPosition="none"
+        snappable={false}
+        origin={false}
+        // 多选时整体框的中央拖拽区改为穿透（pointer-events:none），
+        // 否则它盖住选区 AABB 范围，挡住范围内其他未选图的点选。
+        // 拖整组仍走 per-item onPointerDown（按住任一选中图），不依赖此中央区。
+        passDragArea={true}
+        // ── 拖动（单选）──
+        onDragStart={(e) => {
+          const el = e.target as HTMLElement
+          const itemId = Number(el.dataset.canvasItemId)
+          const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+          if (item)
+            gestureSnapshotRef.current = new Map([
+              [itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]
+            ])
+        }}
+        onDrag={(e) => {
+          e.target.style.transform = e.transform
+        }}
+        onDragEnd={(e) => {
+          if (!e.isDrag) return
+          const el = e.target as HTMLElement
+          const itemId = Number(el.dataset.canvasItemId)
+          const item = items.find((it) => it.id === itemId)
+          if (!item) return
+          const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
+          const distX = (e.lastEvent?.dist?.[0] ?? 0) / scale
+          const distY = (e.lastEvent?.dist?.[1] ?? 0) / scale
+          const afterPatches = [{ id: itemId, x: item.x + distX, y: item.y + distY }]
+          const snap = gestureSnapshotRef.current.get(itemId)
+          const beforePatches = snap ? [{ id: itemId, x: snap.x, y: snap.y }] : null
+          flushSync(() => {
+            updateItems(afterPatches)
+          })
+          moveableRef.current?.updateRect()
+          if (beforePatches) {
+            const fa = afterPatches
+            useCanvasUndoStore.getState().push({
+              apply: () => {
+                useCanvasItemsStore.getState().updateItems(fa)
+                moveableRef.current?.updateRect()
+              },
+              revert: () => {
+                useCanvasItemsStore.getState().updateItems(beforePatches)
+                moveableRef.current?.updateRect()
+              }
             })
-          }}
-          onDragGroupEnd={(e) => {
-            const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const afterPatches = e.events
-              .filter((ev) => ev.isDrag)
-              .map((ev) => {
-                const el = ev.target as HTMLElement
-                const itemId = Number(el.dataset.canvasItemId)
-                const item = items.find((it) => it.id === itemId)
-                if (!item) return null
-                const distX = (ev.lastEvent?.dist?.[0] ?? 0) / scale
-                const distY = (ev.lastEvent?.dist?.[1] ?? 0) / scale
-                return { id: itemId, x: item.x + distX, y: item.y + distY }
-              })
-              .filter((p): p is NonNullable<typeof p> => p !== null)
-            const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
-              const snap = gestureSnapshotRef.current.get(p.id)
-              return { id: p.id, x: snap?.x ?? p.x, y: snap?.y ?? p.y }
-            })
-            flushSync(() => { if (afterPatches.length > 0) updateItems(afterPatches) })
-            moveableRef.current?.updateRect()
-            if (afterPatches.length > 0) {
-              const fa = afterPatches
-              useCanvasUndoStore.getState().push({
-                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
-                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
-              })
-            }
-          }}
-          // ── 缩放（单选）──
-          onResizeStart={(e) => {
-            setIsResizing(true)
-            const ie = e.inputEvent as PointerEvent
-            lockResizeCursor(ie.clientX, ie.clientY)
-            const el = e.target as HTMLElement
-            const itemId = Number(el.dataset.canvasItemId)
+          }
+        }}
+        // ── 拖动（多选）──
+        onDragGroupStart={(e) => {
+          const snap = new Map<
+            number,
+            { x: number; y: number; w: number; h: number; rotation: number }
+          >()
+          for (const ev of e.events) {
+            const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
             const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
-            if (item) gestureSnapshotRef.current = new Map([[itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]])
-          }}
-          onResize={(e) => {
-            e.target.style.transform = e.drag.transform
-            e.target.style.width = `${e.width}px`
-            e.target.style.height = `${e.height}px`
-          }}
-          onResizeEnd={(e) => {
-            setIsResizing(false)
-            unlockResizeCursor()
-            if (!e.isDrag) return
-            const el = e.target as HTMLElement
-            const itemId = Number(el.dataset.canvasItemId)
-            const item = items.find((it) => it.id === itemId)
-            if (!item) return
-            const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const newW = (e.lastEvent?.width ?? item.w * scale) / scale
-            const newH = (e.lastEvent?.height ?? item.h * scale) / scale
-            const dragDistX = (e.lastEvent?.drag?.dist?.[0] ?? 0) / scale
-            const dragDistY = (e.lastEvent?.drag?.dist?.[1] ?? 0) / scale
-            const afterPatches = [{
-              id: itemId, w: newW, h: newH,
+            if (item)
+              snap.set(itemId, {
+                x: item.x,
+                y: item.y,
+                w: item.w,
+                h: item.h,
+                rotation: item.rotation
+              })
+          }
+          gestureSnapshotRef.current = snap
+        }}
+        onDragGroup={(e) => {
+          e.events.forEach((ev) => {
+            ev.target.style.transform = ev.transform
+          })
+        }}
+        onDragGroupEnd={(e) => {
+          const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
+          const afterPatches = e.events
+            .filter((ev) => ev.isDrag)
+            .map((ev) => {
+              const el = ev.target as HTMLElement
+              const itemId = Number(el.dataset.canvasItemId)
+              const item = items.find((it) => it.id === itemId)
+              if (!item) return null
+              const distX = (ev.lastEvent?.dist?.[0] ?? 0) / scale
+              const distY = (ev.lastEvent?.dist?.[1] ?? 0) / scale
+              return { id: itemId, x: item.x + distX, y: item.y + distY }
+            })
+            .filter((p): p is NonNullable<typeof p> => p !== null)
+          const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
+            const snap = gestureSnapshotRef.current.get(p.id)
+            return { id: p.id, x: snap?.x ?? p.x, y: snap?.y ?? p.y }
+          })
+          flushSync(() => {
+            if (afterPatches.length > 0) updateItems(afterPatches)
+          })
+          moveableRef.current?.updateRect()
+          if (afterPatches.length > 0) {
+            const fa = afterPatches
+            useCanvasUndoStore.getState().push({
+              apply: () => {
+                useCanvasItemsStore.getState().updateItems(fa)
+                moveableRef.current?.updateRect()
+              },
+              revert: () => {
+                useCanvasItemsStore.getState().updateItems(beforePatches)
+                moveableRef.current?.updateRect()
+              }
+            })
+          }
+        }}
+        // ── 缩放（单选）──
+        onResizeStart={(e) => {
+          setIsResizing(true)
+          const ie = e.inputEvent as PointerEvent
+          lockResizeCursor(ie.clientX, ie.clientY)
+          const el = e.target as HTMLElement
+          const itemId = Number(el.dataset.canvasItemId)
+          const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+          if (item)
+            gestureSnapshotRef.current = new Map([
+              [itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]
+            ])
+        }}
+        onResize={(e) => {
+          e.target.style.transform = e.drag.transform
+          e.target.style.width = `${e.width}px`
+          e.target.style.height = `${e.height}px`
+          syncContentResize(e.target as HTMLElement, e.width, e.height)
+        }}
+        onResizeEnd={(e) => {
+          setIsResizing(false)
+          unlockResizeCursor()
+          if (!e.isDrag) return
+          const el = e.target as HTMLElement
+          const itemId = Number(el.dataset.canvasItemId)
+          const item = items.find((it) => it.id === itemId)
+          if (!item) return
+          const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
+          const newW = (e.lastEvent?.width ?? item.w * scale) / scale
+          const newH = (e.lastEvent?.height ?? item.h * scale) / scale
+          const dragDistX = (e.lastEvent?.drag?.dist?.[0] ?? 0) / scale
+          const dragDistY = (e.lastEvent?.drag?.dist?.[1] ?? 0) / scale
+          const afterPatches = [
+            {
+              id: itemId,
+              w: newW,
+              h: newH,
               x: item.x + dragDistX + (newW - item.w) / 2,
               y: item.y + dragDistY + (newH - item.h) / 2,
-            }]
-            const snap = gestureSnapshotRef.current.get(itemId)
-            const beforePatches = snap ? [{ id: itemId, x: snap.x, y: snap.y, w: snap.w, h: snap.h }] : null
-            flushSync(() => { updateItems(afterPatches) })
-            moveableRef.current?.updateRect()
-            if (beforePatches) {
-              const fa = afterPatches
-              useCanvasUndoStore.getState().push({
-                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
-                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
-              })
+              // 裁剪元素：内容随框等比缩放（k = newW/item.w，keepRatio 故均匀）
+              clipPolygon: scaleClipContent(item.clipPolygon, item.w !== 0 ? newW / item.w : 1)
             }
-          }}
-          // ── 缩放（多选）──
-          onResizeGroupStart={(e) => {
-            setIsResizing(true)
-            const ie = e.inputEvent as PointerEvent
-            lockResizeCursor(ie.clientX, ie.clientY)
-            const snap = new Map<number, { x: number; y: number; w: number; h: number; rotation: number }>()
-            for (const ev of e.events) {
-              const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
-              const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
-              if (item) snap.set(itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation })
-            }
-            gestureSnapshotRef.current = snap
-          }}
-          onResizeGroup={(e) => {
-            e.events.forEach((ev) => {
-              ev.target.style.transform = ev.drag.transform
-              ev.target.style.width = `${ev.width}px`
-              ev.target.style.height = `${ev.height}px`
-            })
-          }}
-          onResizeGroupEnd={(e) => {
-            setIsResizing(false)
-            unlockResizeCursor()
-            const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const afterPatches = e.events
-              .filter((ev) => ev.isDrag)
-              .map((ev) => {
-                const el = ev.target as HTMLElement
-                const itemId = Number(el.dataset.canvasItemId)
-                const item = items.find((it) => it.id === itemId)
-                if (!item) return null
-                const newW = (ev.lastEvent?.width ?? item.w * scale) / scale
-                const newH = (ev.lastEvent?.height ?? item.h * scale) / scale
-                const dragDistX = (ev.lastEvent?.drag?.dist?.[0] ?? 0) / scale
-                const dragDistY = (ev.lastEvent?.drag?.dist?.[1] ?? 0) / scale
-                return {
-                  id: itemId, w: newW, h: newH,
-                  x: item.x + dragDistX + (newW - item.w) / 2,
-                  y: item.y + dragDistY + (newH - item.h) / 2,
-                }
-              })
-              .filter((p): p is NonNullable<typeof p> => p !== null)
-            const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
-              const snap = gestureSnapshotRef.current.get(p.id)
-              return { id: p.id, x: snap?.x ?? p.x, y: snap?.y ?? p.y, w: snap?.w ?? p.w, h: snap?.h ?? p.h }
-            })
-            flushSync(() => { if (afterPatches.length > 0) updateItems(afterPatches) })
-            moveableRef.current?.updateRect()
-            if (afterPatches.length > 0) {
-              const fa = afterPatches
-              useCanvasUndoStore.getState().push({
-                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
-                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
-              })
-            }
-          }}
-          // ── 旋转（单选）──
-          onRotateStart={(e) => {
-            const el = e.target as HTMLElement
-            const itemId = Number(el.dataset.canvasItemId)
-            const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
-            if (item) gestureSnapshotRef.current = new Map([[itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]])
-          }}
-          onRotate={(e) => {
-            e.target.style.transform = e.drag.transform
-          }}
-          onRotateEnd={(e) => {
-            if (!e.isDrag) return
-            const el = e.target as HTMLElement
-            const itemId = Number(el.dataset.canvasItemId)
-            const item = items.find((it) => it.id === itemId)
-            if (!item) return
-            const totalRotDeg = e.lastEvent?.dist ?? 0
-            const afterPatches = [{ id: itemId, rotation: item.rotation + (totalRotDeg * Math.PI) / 180 }]
-            const snap = gestureSnapshotRef.current.get(itemId)
-            const beforePatches = snap ? [{ id: itemId, rotation: snap.rotation }] : null
-            flushSync(() => { updateItems(afterPatches) })
-            moveableRef.current?.updateRect()
-            if (beforePatches) {
-              const fa = afterPatches
-              useCanvasUndoStore.getState().push({
-                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
-                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
-              })
-            }
-          }}
-          // ── 旋转（多选）──
-          onRotateGroupStart={(e) => {
-            const snap = new Map<number, { x: number; y: number; w: number; h: number; rotation: number }>()
-            for (const ev of e.events) {
-              const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
-              const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
-              if (item) snap.set(itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation })
-            }
-            gestureSnapshotRef.current = snap
-          }}
-          onRotateGroup={(e) => {
-            e.events.forEach((ev) => {
-              ev.target.style.transform = ev.drag.transform
-            })
-          }}
-          onRotateGroupEnd={(e) => {
-            const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
-            const afterPatches = e.events
-              .filter((ev) => ev.isDrag)
-              .map((ev) => {
-                const el = ev.target as HTMLElement
-                const itemId = Number(el.dataset.canvasItemId)
-                const item = items.find((it) => it.id === itemId)
-                if (!item) return null
-                const totalRotDeg = ev.lastEvent?.dist ?? 0
-                const dragDistX = (ev.lastEvent?.drag?.dist?.[0] ?? 0) / scale
-                const dragDistY = (ev.lastEvent?.drag?.dist?.[1] ?? 0) / scale
-                return {
+          ]
+          const snap = gestureSnapshotRef.current.get(itemId)
+          const beforePatches = snap
+            ? [
+                {
                   id: itemId,
-                  rotation: item.rotation + (totalRotDeg * Math.PI) / 180,
-                  x: item.x + dragDistX,
-                  y: item.y + dragDistY,
+                  x: snap.x,
+                  y: snap.y,
+                  w: snap.w,
+                  h: snap.h,
+                  clipPolygon: item.clipPolygon
                 }
-              })
-              .filter((p): p is NonNullable<typeof p> => p !== null)
-            const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
-              const snap = gestureSnapshotRef.current.get(p.id)
-              return { id: p.id, rotation: snap?.rotation ?? p.rotation, x: snap?.x ?? p.x, y: snap?.y ?? p.y }
+              ]
+            : null
+          flushSync(() => {
+            updateItems(afterPatches)
+          })
+          moveableRef.current?.updateRect()
+          if (beforePatches) {
+            const fa = afterPatches
+            useCanvasUndoStore.getState().push({
+              apply: () => {
+                useCanvasItemsStore.getState().updateItems(fa)
+                moveableRef.current?.updateRect()
+              },
+              revert: () => {
+                useCanvasItemsStore.getState().updateItems(beforePatches)
+                moveableRef.current?.updateRect()
+              }
             })
-            flushSync(() => { if (afterPatches.length > 0) updateItems(afterPatches) })
-            moveableRef.current?.updateRect()
-            if (afterPatches.length > 0) {
-              const fa = afterPatches
-              useCanvasUndoStore.getState().push({
-                apply: () => { useCanvasItemsStore.getState().updateItems(fa); moveableRef.current?.updateRect() },
-                revert: () => { useCanvasItemsStore.getState().updateItems(beforePatches); moveableRef.current?.updateRect() },
+          }
+        }}
+        // ── 缩放（多选）──
+        onResizeGroupStart={(e) => {
+          setIsResizing(true)
+          const ie = e.inputEvent as PointerEvent
+          lockResizeCursor(ie.clientX, ie.clientY)
+          const snap = new Map<
+            number,
+            { x: number; y: number; w: number; h: number; rotation: number }
+          >()
+          for (const ev of e.events) {
+            const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
+            const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+            if (item)
+              snap.set(itemId, {
+                x: item.x,
+                y: item.y,
+                w: item.w,
+                h: item.h,
+                rotation: item.rotation
               })
+          }
+          gestureSnapshotRef.current = snap
+        }}
+        onResizeGroup={(e) => {
+          e.events.forEach((ev) => {
+            ev.target.style.transform = ev.drag.transform
+            ev.target.style.width = `${ev.width}px`
+            ev.target.style.height = `${ev.height}px`
+            syncContentResize(ev.target as HTMLElement, ev.width, ev.height)
+          })
+        }}
+        onResizeGroupEnd={(e) => {
+          setIsResizing(false)
+          unlockResizeCursor()
+          const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
+          const afterPatches = e.events
+            .filter((ev) => ev.isDrag)
+            .map((ev) => {
+              const el = ev.target as HTMLElement
+              const itemId = Number(el.dataset.canvasItemId)
+              const item = items.find((it) => it.id === itemId)
+              if (!item) return null
+              const newW = (ev.lastEvent?.width ?? item.w * scale) / scale
+              const newH = (ev.lastEvent?.height ?? item.h * scale) / scale
+              const dragDistX = (ev.lastEvent?.drag?.dist?.[0] ?? 0) / scale
+              const dragDistY = (ev.lastEvent?.drag?.dist?.[1] ?? 0) / scale
+              return {
+                id: itemId,
+                w: newW,
+                h: newH,
+                x: item.x + dragDistX + (newW - item.w) / 2,
+                y: item.y + dragDistY + (newH - item.h) / 2,
+                clipPolygon: scaleClipContent(item.clipPolygon, item.w !== 0 ? newW / item.w : 1)
+              }
+            })
+            .filter((p): p is NonNullable<typeof p> => p !== null)
+          const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
+            const snap = gestureSnapshotRef.current.get(p.id)
+            const orig = items.find((it) => it.id === p.id)
+            return {
+              id: p.id,
+              x: snap?.x ?? p.x,
+              y: snap?.y ?? p.y,
+              w: snap?.w ?? p.w,
+              h: snap?.h ?? p.h,
+              clipPolygon: orig?.clipPolygon ?? null
             }
-          }}
-        />
+          })
+          flushSync(() => {
+            if (afterPatches.length > 0) updateItems(afterPatches)
+          })
+          moveableRef.current?.updateRect()
+          if (afterPatches.length > 0) {
+            const fa = afterPatches
+            useCanvasUndoStore.getState().push({
+              apply: () => {
+                useCanvasItemsStore.getState().updateItems(fa)
+                moveableRef.current?.updateRect()
+              },
+              revert: () => {
+                useCanvasItemsStore.getState().updateItems(beforePatches)
+                moveableRef.current?.updateRect()
+              }
+            })
+          }
+        }}
+        // ── 旋转（单选）──
+        onRotateStart={(e) => {
+          const el = e.target as HTMLElement
+          const itemId = Number(el.dataset.canvasItemId)
+          const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+          if (item)
+            gestureSnapshotRef.current = new Map([
+              [itemId, { x: item.x, y: item.y, w: item.w, h: item.h, rotation: item.rotation }]
+            ])
+        }}
+        onRotate={(e) => {
+          e.target.style.transform = e.drag.transform
+        }}
+        onRotateEnd={(e) => {
+          if (!e.isDrag) return
+          const el = e.target as HTMLElement
+          const itemId = Number(el.dataset.canvasItemId)
+          const item = items.find((it) => it.id === itemId)
+          if (!item) return
+          const totalRotDeg = e.lastEvent?.dist ?? 0
+          const afterPatches = [
+            { id: itemId, rotation: item.rotation + (totalRotDeg * Math.PI) / 180 }
+          ]
+          const snap = gestureSnapshotRef.current.get(itemId)
+          const beforePatches = snap ? [{ id: itemId, rotation: snap.rotation }] : null
+          flushSync(() => {
+            updateItems(afterPatches)
+          })
+          moveableRef.current?.updateRect()
+          if (beforePatches) {
+            const fa = afterPatches
+            useCanvasUndoStore.getState().push({
+              apply: () => {
+                useCanvasItemsStore.getState().updateItems(fa)
+                moveableRef.current?.updateRect()
+              },
+              revert: () => {
+                useCanvasItemsStore.getState().updateItems(beforePatches)
+                moveableRef.current?.updateRect()
+              }
+            })
+          }
+        }}
+        // ── 旋转（多选）──
+        onRotateGroupStart={(e) => {
+          const snap = new Map<
+            number,
+            { x: number; y: number; w: number; h: number; rotation: number }
+          >()
+          for (const ev of e.events) {
+            const itemId = Number((ev.target as HTMLElement).dataset.canvasItemId)
+            const item = useCanvasItemsStore.getState().items.find((it) => it.id === itemId)
+            if (item)
+              snap.set(itemId, {
+                x: item.x,
+                y: item.y,
+                w: item.w,
+                h: item.h,
+                rotation: item.rotation
+              })
+          }
+          gestureSnapshotRef.current = snap
+        }}
+        onRotateGroup={(e) => {
+          e.events.forEach((ev) => {
+            ev.target.style.transform = ev.drag.transform
+          })
+        }}
+        onRotateGroupEnd={(e) => {
+          const scale = useCanvasViewportStore.getState().byId[canvasId]?.scale ?? 1
+          const afterPatches = e.events
+            .filter((ev) => ev.isDrag)
+            .map((ev) => {
+              const el = ev.target as HTMLElement
+              const itemId = Number(el.dataset.canvasItemId)
+              const item = items.find((it) => it.id === itemId)
+              if (!item) return null
+              const totalRotDeg = ev.lastEvent?.dist ?? 0
+              const dragDistX = (ev.lastEvent?.drag?.dist?.[0] ?? 0) / scale
+              const dragDistY = (ev.lastEvent?.drag?.dist?.[1] ?? 0) / scale
+              return {
+                id: itemId,
+                rotation: item.rotation + (totalRotDeg * Math.PI) / 180,
+                x: item.x + dragDistX,
+                y: item.y + dragDistY
+              }
+            })
+            .filter((p): p is NonNullable<typeof p> => p !== null)
+          const beforePatches: CanvasItemPatch[] = afterPatches.map((p) => {
+            const snap = gestureSnapshotRef.current.get(p.id)
+            return {
+              id: p.id,
+              rotation: snap?.rotation ?? p.rotation,
+              x: snap?.x ?? p.x,
+              y: snap?.y ?? p.y
+            }
+          })
+          flushSync(() => {
+            if (afterPatches.length > 0) updateItems(afterPatches)
+          })
+          moveableRef.current?.updateRect()
+          if (afterPatches.length > 0) {
+            const fa = afterPatches
+            useCanvasUndoStore.getState().push({
+              apply: () => {
+                useCanvasItemsStore.getState().updateItems(fa)
+                moveableRef.current?.updateRect()
+              },
+              revert: () => {
+                useCanvasItemsStore.getState().updateItems(beforePatches)
+                moveableRef.current?.updateRect()
+              }
+            })
+          }
+        }}
+      />
 
       {/* 四角旋转区：选中时在图片实际角点外侧渲染旋转热区 */}
       {selected.size > 0 && (
@@ -1005,6 +1383,11 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
               e.stop()
               return
             }
+            // C 裁剪态 → 交给裁剪 pointer handler，不框选
+            if (cKeyHeldRef.current) {
+              e.stop()
+              return
+            }
             // 按在 Moveable 手柄/控制框上 → 交给 Moveable，不框选
             if (target && moveableRef.current?.isMoveableElement(target)) {
               e.stop()
@@ -1029,7 +1412,9 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           onSelect={(e) => {
             marqueeActiveRef.current = true
             // e.selected = 当前矩形覆盖到的全部目标（continueSelect=false，每次重新计算）
-            const coveredIds = e.selected.map((el) => Number((el as HTMLElement).dataset.canvasItemId))
+            const coveredIds = e.selected.map((el) =>
+              Number((el as HTMLElement).dataset.canvasItemId)
+            )
             const start = marqueeStartRef.current
             let next: Set<number>
             if (marqueeModeRef.current === 'add') {
@@ -1050,6 +1435,24 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
               moveableRef.current?.updateRect()
             }
             marqueeActiveRef.current = false
+          }}
+        />
+      )}
+
+      {/* 裁剪框视觉（C 键按住 + 拖拽期间显示虚线矩形） */}
+      {cropDragRect && (
+        <div
+          style={{
+            position: 'absolute',
+            left: cropDragRect.x,
+            top: cropDragRect.y,
+            width: cropDragRect.w,
+            height: cropDragRect.h,
+            border: '1.5px dashed var(--color-primary)',
+            background: 'hsl(var(--brand-hue) 35% 60% / 0.08)',
+            pointerEvents: 'none',
+            boxSizing: 'border-box',
+            zIndex: 9999
           }}
         />
       )}

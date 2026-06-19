@@ -56,7 +56,8 @@ import {
   Pencil,
   Trash2,
   Presentation,
-  Search
+  Search,
+  Folder
 } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../main/categories'
@@ -485,7 +486,7 @@ function App(): React.JSX.Element {
         <header
           data-drag-region="true"
           className="h-16 flex-shrink-0 z-20 flex items-stretch"
-          style={{ ...DRAGGABLE, backgroundColor: theme === 'dark' ? '#111009' : '#f5f4f1' }}
+          style={{ ...DRAGGABLE, backgroundColor: theme === 'dark' ? '#111009' : '#d9d6d3' }}
         >
           {/* 左：根目录 / 分类名称区，贴左 */}
           <div className="flex-1 min-w-0 flex items-center px-4 gap-3">
@@ -496,23 +497,27 @@ function App(): React.JSX.Element {
                   const cat = categories.find((c) => c.id === view.id)
                   return (
                     <>
+                      <span className="p-2 flex-shrink-0" style={NOT_DRAGGABLE}>
+                        <Folder className="w-5 h-5" />
+                      </span>
                       <span
                         className="text-sm font-semibold truncate max-w-md"
                         style={NOT_DRAGGABLE}
                       >
                         {cat?.name ?? '分类'}
                       </span>
-                      <button
-                        onClick={() => {
-                          const cat = categories.find((c) => c.id === view.id)
-                          if (cat) setRenameTarget(cat)
-                        }}
-                        className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
-                        title="重命名分类"
-                        style={NOT_DRAGGABLE}
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
+                      <Tooltip text="重命名分类" side="bottom">
+                        <button
+                          onClick={() => {
+                            const cat = categories.find((c) => c.id === view.id)
+                            if (cat) setRenameTarget(cat)
+                          }}
+                          className="p-1.5 rounded-lg hover:bg-sidebar-hover transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
+                          style={NOT_DRAGGABLE}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                      </Tooltip>
                       {cat && (
                         <span className="text-xs text-muted-foreground" style={NOT_DRAGGABLE}>
                           {cat.itemCount.toLocaleString()} 项
@@ -547,7 +552,7 @@ function App(): React.JSX.Element {
                       <button
                         onClick={handleRescan}
                         disabled={isScanning}
-                        className="p-2 rounded-lg hover:bg-muted transition-colors disabled:opacity-50 flex-shrink-0"
+                        className="p-2 rounded-lg hover:bg-sidebar-hover transition-colors disabled:opacity-50 flex-shrink-0"
                         style={NOT_DRAGGABLE}
                       >
                         <RefreshCw
@@ -576,14 +581,16 @@ function App(): React.JSX.Element {
             style={NOT_DRAGGABLE}
           >
             <CurrentCanvasChip />
-            <SettingsPopover
-              showExploreMode={view.kind === 'explore'}
-              showGridSize={view.kind !== 'review' && !!rootPath && !isScanning}
-              exploreMode={exploreMode}
-              setExploreMode={setExploreMode}
-              gridSize={gridSize}
-              theme={theme}
-            />
+            <div className="ml-2 mr-4">
+              <SettingsPopover
+                showExploreMode={view.kind === 'explore'}
+                showGridSize={view.kind !== 'review' && !!rootPath && !isScanning}
+                exploreMode={exploreMode}
+                setExploreMode={setExploreMode}
+                gridSize={gridSize}
+                theme={theme}
+              />
+            </div>
             {/* 系统按钮（最小化/最大化/关闭）由 Electron WCO 在此处自绘，
                 这里占位 ~140px 避免内容压到按钮上。
                 macOS 走默认 hidden（信号灯在左上），不需要这块占位但 140px 留白也无碍。
@@ -614,7 +621,7 @@ function App(): React.JSX.Element {
               {!sidebarCollapsed && (
                 <h1 className="text-xl font-bold text-primary truncate">Serendip</h1>
               )}
-              <Tooltip text={sidebarCollapsed ? '展开侧栏' : '折叠侧栏'} side="right">
+              <Tooltip text={sidebarCollapsed ? '展开侧栏（Tab）' : '折叠侧栏（Tab）'} side="right">
                 <button
                   onClick={toggleSidebar}
                   className="p-1.5 rounded-lg hover:bg-sidebar-hover transition-colors text-muted-foreground hover:text-foreground flex-shrink-0"
@@ -726,7 +733,7 @@ function App(): React.JSX.Element {
           <main
             className={clsx(
               'flex-1 min-w-0 overflow-hidden relative',
-              theme === 'light' ? 'bg-[#dbd8d6]' : 'bg-background'
+              theme === 'light' ? 'bg-[#cbc8c5]' : 'bg-background'
             )}
           >
             {/* ExploreView 常驻挂载，切走时用 hidden 隐藏而非销毁，
@@ -946,15 +953,15 @@ function SettingsPopover({
 
   return (
     <>
-      <Tooltip text="显示设置" side="bottom">
+      <Tooltip text="偏好设置" side="bottom">
         <button
           ref={btnRef}
           onClick={() => setOpen((v) => !v)}
           className={clsx(
             'p-2 rounded-lg transition-colors',
             open
-              ? 'bg-muted text-foreground'
-              : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+              ? 'bg-sidebar-hover text-foreground'
+              : 'hover:bg-sidebar-hover text-muted-foreground hover:text-foreground'
           )}
           aria-expanded={open}
         >
@@ -974,7 +981,7 @@ function SettingsPopover({
                 <span className="text-xs text-muted-foreground flex-1">缩略图</span>
                 <button
                   onClick={cycleGridSize}
-                  className="w-20 py-2 rounded-lg text-xs font-medium bg-muted text-foreground hover:bg-border transition-colors text-center"
+                  className="w-20 py-2 rounded-lg text-xs font-medium bg-sidebar-hover text-foreground hover:bg-[rgba(0,0,0,0.15)] transition-colors text-center"
                 >
                   {GRID_SIZE_LABEL[gridSize]}
                 </button>
@@ -985,7 +992,7 @@ function SettingsPopover({
                 <span className="text-xs text-muted-foreground flex-1">探索度</span>
                 <button
                   onClick={cycleExplore}
-                  className="w-20 py-2 rounded-lg text-xs font-medium bg-muted text-foreground hover:bg-border transition-colors text-center"
+                  className="w-20 py-2 rounded-lg text-xs font-medium bg-sidebar-hover text-foreground hover:bg-[rgba(0,0,0,0.15)] transition-colors text-center"
                 >
                   {EXPLORE_LABEL[exploreMode]}
                 </button>
@@ -995,7 +1002,7 @@ function SettingsPopover({
               <span className="text-xs text-muted-foreground flex-1">外观</span>
               <button
                 onClick={toggleTheme}
-                className="w-20 py-2 rounded-lg text-xs font-medium bg-muted text-foreground hover:bg-border transition-colors flex items-center justify-center gap-1.5"
+                className="w-20 py-2 rounded-lg text-xs font-medium bg-sidebar-hover text-foreground hover:bg-[rgba(0,0,0,0.15)] transition-colors flex items-center justify-center gap-1.5"
               >
                 {theme === 'light' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
                 {theme === 'light' ? '亮色' : '暗色'}

@@ -256,7 +256,7 @@ export function registerIpcHandlers(): void {
       // color/symbolColor 直接传入时优先使用，否则由 theme 派生
       // 详情页传 '#00000000' 全透明，沉浸式；主页传略实色让 OS hover 高亮可见
       // 亮色：接近 glass-over-background 的温暖近白；暗色：接近 glass-over-background 的近黑
-      const color = opts.color ?? (isDark ? '#111009' : '#f5f4f1')
+      const color = opts.color ?? (isDark ? '#111009' : '#d9d6d3')
       const symbolColor = opts.symbolColor ?? (isDark ? '#cccccc' : '#444444')
 
       try {
