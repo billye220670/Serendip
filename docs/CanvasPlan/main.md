@@ -14,7 +14,7 @@
 | 阶段 2 | 画布主视图骨架 + 视口（pan/zoom/F 聚焦）+ 元素渲染 + 视口持久化 | ✅ 已完成 | [stage2-completed.md](stage2-completed.md) |
 | 阶段 3 | 选择 + 变换（移动 / 8 手柄缩放 / 旋转）+ 视频元素 + 出视口暂停 | ✅ 已完成 | [stage3-completed.md](stage3-completed.md) |
 | 阶段 4 | 键盘快捷键 + 撤销重做 + 方向键导航 + 原图加载 | ✅ 已完成 | [stage4-completed.md](stage4-completed.md) |
-| 阶段 5 | 裁剪（矩形交互 → 多边形结果） | 🔲 待开发 | [stage5.md](stage5.md) |
+| 阶段 5 | 裁剪（矩形交互 → 多边形结果） | ✅ 已完成 | [stage5.md](stage5.md) |
 | 阶段 6 | 摄影机手摇调试面板 | 🔲 待开发 | [stage6.md](stage6.md) |
 | 阶段 7 | 边界 / 空态 / 性能收尾 | 🔲 待开发 | [stage7.md](stage7.md) |
 
