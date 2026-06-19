@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Pause, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp, X } from 'lucide-react'
 import clsx from 'clsx'
+import { clampScale, ZOOM_STEP } from '../lib/canvasMath'
+import { CURSOR_HAND_OPEN, CURSOR_HAND_GRAB } from '../lib/handCursor'
 import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
@@ -38,6 +40,7 @@ export function DetailView(): React.JSX.Element | null {
   const isLight = theme === 'light'
 
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [lockState, setLockState] = useState<'off' | 'on' | 'closing'>('off')
   useEffect(() => {
     const handler = (_evt: unknown, isFs: boolean): void => setIsFullscreen(isFs)
     window.electron.ipcRenderer.on(IPC.FULLSCREEN_CHANGE, handler)
@@ -255,6 +258,7 @@ export function DetailView(): React.JSX.Element | null {
   const WHEEL_THRESHOLD = 100
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.stopPropagation()
+    if (lockState !== 'off') return
     // 反向滚动：先把累计值归零，避免反向时还要先消耗掉同向余量
     if (accumRef.current !== 0 && Math.sign(e.deltaY) !== Math.sign(accumRef.current)) {
       accumRef.current = 0
@@ -268,7 +272,7 @@ export function DetailView(): React.JSX.Element | null {
       prev()
       accumRef.current += WHEEL_THRESHOLD
     }
-  }, [next, prev])
+  }, [next, prev, lockState])
 
   // 键盘：Esc / ←→ / 空格 / Tab。
   // 用左右而非上下，与底部缩略图导航的左右排布心智对齐（→ 下一张，← 上一张）
@@ -276,10 +280,18 @@ export function DetailView(): React.JSX.Element | null {
     if (!isOpen) return
     const handler = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
+        // 锁定态：Esc 退出锁定，不关闭详情页
+        if (lockState !== 'off') {
+          setLockState('closing')
+          setTimeout(() => setLockState('off'), 220)
+          return
+        }
         if (searchOpen) { setSearchOpen(false); return }
         close()
         return
       }
+      // 锁定态：吞掉所有其余按键，由 LockViewport 内部处理空格/F
+      if (lockState !== 'off') return
       if (searchOpen) return
       if (e.key === 'Tab') { e.preventDefault(); togglePanel(); return }
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next() }
@@ -287,7 +299,7 @@ export function DetailView(): React.JSX.Element | null {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isOpen, searchOpen, close, next, prev, togglePanel])
+  }, [isOpen, lockState, searchOpen, close, next, prev, togglePanel])
 
   if (!isOpen && !visible) return null
   if (!currentItem) return null
@@ -296,7 +308,7 @@ export function DetailView(): React.JSX.Element | null {
     <div
       className={clsx(
         'fixed inset-0 z-50 flex flex-row',
-        isLight ? 'bg-stone-200' : 'bg-black',
+        isLight ? 'bg-stone-300' : 'bg-black',
         'transition-opacity duration-300',
         visible ? 'opacity-100' : 'opacity-0'
       )}
@@ -304,160 +316,178 @@ export function DetailView(): React.JSX.Element | null {
     >
       <div className="relative flex-1 min-w-0 flex flex-col items-center justify-center">
         {/* 顶部渐变遮罩：从窗口顶端向下淡出，pointer-events-none 不干扰拖拽 */}
-        <div
-          className="absolute left-0 right-0 top-0 h-40 z-10 pointer-events-none"
-          style={{
-            background: isLight
-              ? 'linear-gradient(to bottom, rgba(214,211,209,0.97) 0%, rgba(214,211,209,0.7) 40%, rgba(214,211,209,0.2) 75%, transparent 100%)'
-              : 'linear-gradient(to bottom, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.2) 75%, transparent 100%)'
-          }}
-        />
+        {lockState === 'off' && (
+          <div
+            className="absolute left-0 right-0 top-0 h-40 z-10 pointer-events-none"
+            style={{
+              background: isLight
+                ? 'linear-gradient(to bottom, rgba(214,211,209,0.97) 0%, rgba(214,211,209,0.7) 40%, rgba(214,211,209,0.2) 75%, transparent 100%)'
+                : 'linear-gradient(to bottom, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0.2) 75%, transparent 100%)'
+            }}
+          />
+        )}
 
-        {/* 顶栏容器：整行设为可拖拽区域，按钮/面包屑单独设 no-drag 覆盖，
-            这样点按钮正常响应 click，点空白区域可拖动窗口 */}
-        <div
-          className="absolute left-0 right-0 top-0 z-20 flex items-center gap-3 px-4 py-3"
-          style={{ paddingRight: 156, WebkitAppRegion: 'drag' } as React.CSSProperties}
-        >
-          <button
-            onClick={close}
-            aria-label="后退"
-            className={clsx(
-              'flex-shrink-0 grid place-items-center p-3 rounded-full transition-colors focus:outline-none focus-visible:outline-none backdrop-blur-sm',
-              isLight ? 'bg-white/70 text-gray-900 hover:bg-white/85' : 'bg-black/45 text-white hover:bg-black/65'
-            )}
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        {/* 顶栏容器 */}
+        {lockState === 'off' && (
+          <div
+            className="absolute left-0 right-0 top-0 z-20 flex items-center gap-3 px-4 py-3"
+            style={{ paddingRight: 156, WebkitAppRegion: 'drag' } as React.CSSProperties}
           >
-            <ChevronLeft className="w-6 h-6" />
-          </button>
-          <div className="flex-1 min-w-0">
-            <Breadcrumb
-              item={currentItem}
-              rootPath={rootPath}
-              scopePath={scopePath}
-              onSetScope={setScope}
-            />
+            <button
+              onClick={close}
+              aria-label="后退"
+              className={clsx(
+                'flex-shrink-0 grid place-items-center p-3 rounded-full transition-colors focus:outline-none focus-visible:outline-none backdrop-blur-sm',
+                isLight ? 'bg-white/70 text-gray-900 hover:bg-white/85' : 'bg-black/45 text-white hover:bg-black/65'
+              )}
+              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            >
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+            <div className="flex-1 min-w-0">
+              <Breadcrumb
+                item={currentItem}
+                rootPath={rootPath}
+                scopePath={scopePath}
+                onSetScope={setScope}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* 面板开关按钮：fixed 定位；全屏时贴右，非全屏时让出 WCO 系统按钮区 */}
-        <Tooltip text={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'} side="bottom">
-          <button
-            onClick={togglePanel}
-            aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
-            className={clsx(
-              'fixed z-[60] grid place-items-center p-2 rounded-lg transition-colors focus:outline-none focus-visible:outline-none',
-              isLight ? 'text-gray-700 hover:bg-black/10' : 'text-white/80 hover:bg-white/15'
-            )}
-            style={{ top: 16, right: isFullscreen ? 8 : 148, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          >
-            {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
-          </button>
-        </Tooltip>
+        {/* 面板开关按钮 */}
+        {lockState === 'off' && (
+          <Tooltip text={panelOpen ? '收起推荐（Tab）' : '推荐（Tab）'} side="bottom">
+            <button
+              onClick={togglePanel}
+              aria-label={panelOpen ? '收起推荐面板' : '展开推荐面板'}
+              className={clsx(
+                'fixed z-[60] grid place-items-center p-2 rounded-lg transition-colors focus:outline-none focus-visible:outline-none',
+                isLight ? 'text-gray-700 hover:bg-black/10' : 'text-white/80 hover:bg-white/15'
+              )}
+              style={{ top: 16, right: isFullscreen ? 8 : 148, WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+            >
+              {panelOpen ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
+            </button>
+          </Tooltip>
+        )}
 
         {/* 内容区（瞬切，无位移动效）。父容器宽度随面板挤压收缩，img 自动 fit */}
-        <div className="w-full h-full flex items-center justify-center">
+        <div
+          className="w-full h-full flex items-center justify-center"
+          onDoubleClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            setLockState('on')
+          }}
+        >
           {currentItem.type === 'video' ? (
-            <VideoPlayer item={currentItem} />
+            <VideoPlayer item={currentItem} onEnterLock={() => setLockState('on')} />
           ) : (
             <ImageViewer item={currentItem} />
           )}
         </div>
 
-        {/* 底部缩略图条：left-1/2 相对左区中点，挤压后随之向左居中 */}
-        <ThumbStrip sequence={sequence} cursor={cursor} jumpTo={jumpTo} />
+        {/* 底部缩略图条 */}
+        {lockState === 'off' && (
+          <ThumbStrip sequence={sequence} cursor={cursor} jumpTo={jumpTo} />
+        )}
 
         {/* 底部左侧操作区：喜欢(f) + 分隔线 + 分类入口(h)，不与缩略图条争位 */}
-        <div className="absolute bottom-5 left-4 z-20 flex items-center gap-2">
-          {/* f：喜欢 */}
-          <button
-            onClick={() => { void handleLikeToggle() }}
-            aria-label={itemLiked ? '取消喜欢' : '喜欢'}
+        {lockState === 'off' && (
+          <div className="absolute bottom-5 left-4 z-20 flex items-center gap-2">
+            {/* f：喜欢 */}
+            <button
+              onClick={() => { void handleLikeToggle() }}
+              aria-label={itemLiked ? '取消喜欢' : '喜欢'}
+              className={clsx(
+                'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
+                itemLiked
+                  ? 'bg-pink-500/90 text-white hover:bg-pink-400/90'
+                  : isLight
+                    ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
+                    : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+              )}
+            >
+              <Heart className={clsx('w-5 h-5', itemLiked && 'fill-current')} />
+            </button>
+
+            <div className={isLight ? 'w-px h-6 bg-foreground/15' : 'w-px h-6 bg-white/25'} />
+
+            {/* h：# 按钮，relative 用于面板锚定 */}
+            <div className="relative">
+              <Tooltip text="管理分类" side="top">
+                <button
+                  onClick={() => setSearchOpen((v) => !v)}
+                  aria-label="管理分类"
+                  className={clsx(
+                    'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
+                    searchOpen
+                      ? 'bg-primary text-white'
+                      : isLight
+                        ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
+                        : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                  )}
+                >
+                  <Hash className="w-5 h-5" />
+                </button>
+              </Tooltip>
+
+              {/* 分类搜索面板：absolute bottom-full，锚定在 # 按钮上方 */}
+              {searchOpen && (
+                <CategorySearchPanel
+                  fileId={currentItem.id}
+                  categories={categories}
+                  memberIds={itemCategoryIds}
+                  onToggle={handleCategoryToggle}
+                  onCreate={handleCategoryCreate}
+                  onClose={() => setSearchOpen(false)}
+                />
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 加入画布胶囊 */}
+        {lockState === 'off' && (
+          <div
+            ref={capsuleRef}
             className={clsx(
-              'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
-              itemLiked
-                ? 'bg-pink-500/90 text-white hover:bg-pink-400/90'
-                : isLight
-                  ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
-                  : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+              'absolute bottom-5 right-4 z-20 flex items-center rounded-full backdrop-blur-sm overflow-hidden',
+              isLight ? 'bg-white/70 text-gray-900/60' : 'bg-black/45 text-white/70'
             )}
           >
-            <Heart className={clsx('w-5 h-5', itemLiked && 'fill-current')} />
-          </button>
-
-          <div className={isLight ? 'w-px h-6 bg-foreground/15' : 'w-px h-6 bg-white/25'} />
-
-          {/* h：# 按钮，relative 用于面板锚定 */}
-          <div className="relative">
-            <Tooltip text="管理分类" side="top">
+            <Tooltip text={currentCanvasId ? '加入当前画布' : '新建画布并加入'}>
               <button
-                onClick={() => setSearchOpen((v) => !v)}
-                aria-label="管理分类"
+                onClick={(e) => { void handleAddToCanvas(e) }}
                 className={clsx(
-                  'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
-                  searchOpen
-                    ? 'bg-primary text-white'
-                    : isLight
-                      ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
-                      : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                  'px-3.5 py-3 transition-colors focus:outline-none',
+                  isLight ? 'hover:bg-white/85 hover:text-gray-900' : 'hover:bg-black/65 hover:text-white'
                 )}
               >
-                <Hash className="w-5 h-5" />
+                <Presentation className="w-5 h-5" />
               </button>
             </Tooltip>
-
-            {/* 分类搜索面板：absolute bottom-full，锚定在 # 按钮上方 */}
-            {searchOpen && (
-              <CategorySearchPanel
-                fileId={currentItem.id}
-                categories={categories}
-                memberIds={itemCategoryIds}
-                onToggle={handleCategoryToggle}
-                onCreate={handleCategoryCreate}
-                onClose={() => setSearchOpen(false)}
-              />
-            )}
+            <div className={clsx('w-px h-4 flex-shrink-0', isLight ? 'bg-foreground/15' : 'bg-white/25')} />
+            <Tooltip text="选择画布">
+              <button
+                ref={pickerTriggerRef}
+                onClick={handleOpenCanvasPicker}
+                className={clsx(
+                  'px-2.5 py-3 transition-colors focus:outline-none',
+                  canvasPicker
+                    ? 'bg-primary/80 text-white'
+                    : isLight ? 'hover:bg-white/85 hover:text-gray-900' : 'hover:bg-black/65 hover:text-white'
+                )}
+              >
+                <ChevronUp className="w-4 h-4" />
+              </button>
+            </Tooltip>
           </div>
-        </div>
-
-        {/* 加入画布胶囊：绝对定位在图片区右下角，随推荐面板打开被左推 */}
-        <div
-          ref={capsuleRef}
-          className={clsx(
-            'absolute bottom-5 right-4 z-20 flex items-center rounded-full backdrop-blur-sm overflow-hidden',
-            isLight ? 'bg-white/70 text-gray-900/60' : 'bg-black/45 text-white/70'
-          )}
-        >
-          <Tooltip text={currentCanvasId ? '加入当前画布' : '新建画布并加入'}>
-            <button
-              onClick={(e) => { void handleAddToCanvas(e) }}
-              className={clsx(
-                'px-3.5 py-3 transition-colors focus:outline-none',
-                isLight ? 'hover:bg-white/85 hover:text-gray-900' : 'hover:bg-black/65 hover:text-white'
-              )}
-            >
-              <Presentation className="w-5 h-5" />
-            </button>
-          </Tooltip>
-          <div className={clsx('w-px h-4 flex-shrink-0', isLight ? 'bg-foreground/15' : 'bg-white/25')} />
-          <Tooltip text="选择画布">
-            <button
-              ref={pickerTriggerRef}
-              onClick={handleOpenCanvasPicker}
-              className={clsx(
-                'px-2.5 py-3 transition-colors focus:outline-none',
-                canvasPicker
-                  ? 'bg-primary/80 text-white'
-                  : isLight ? 'hover:bg-white/85 hover:text-gray-900' : 'hover:bg-black/65 hover:text-white'
-              )}
-            >
-              <ChevronUp className="w-4 h-4" />
-            </button>
-          </Tooltip>
-        </div>
+        )}
 
         {/* 画布 picker */}
-        {canvasPicker && (
+        {lockState === 'off' && canvasPicker && (
           <CanvasPicker
             x={canvasPicker.x}
             y={canvasPicker.y}
@@ -472,16 +502,29 @@ export function DetailView(): React.JSX.Element | null {
         )}
 
         {/* 面板打开时的透明点击捕获层（点面板外区域关闭，z-[19] 低于操作区 z-20） */}
-        {searchOpen && (
+        {lockState === 'off' && searchOpen && (
           <div
             className="absolute inset-0 z-[19]"
             onClick={() => setSearchOpen(false)}
           />
         )}
+
+        {/* 锁定模式 overlay */}
+        {lockState !== 'off' && (
+          <LockViewport
+            item={currentItem}
+            isLight={isLight}
+            closing={lockState === 'closing'}
+            onRequestClose={() => {
+              setLockState('closing')
+              setTimeout(() => setLockState('off'), 220)
+            }}
+          />
+        )}
       </div>
 
       {/* 右侧推荐面板（d）— 挤压布局：宽度受 open 切换 0/PANEL_WIDTH，width 动画收展 */}
-      <RecommendationsPanel open={panelOpen} />
+      <RecommendationsPanel open={panelOpen && lockState === 'off'} />
 
       {/* 预加载下 1-2 张图（不可见） */}
       <Preloader sequence={sequence} cursor={cursor} />
@@ -545,7 +588,7 @@ function ImageViewer({ item }: { item: MediaItem }): React.JSX.Element {
 }
 
 /** 视频播放器：单实例，切走立即停止解码 */
-function VideoPlayer({ item }: { item: MediaItem }): React.JSX.Element {
+function VideoPlayer({ item, onEnterLock }: { item: MediaItem; onEnterLock: () => void }): React.JSX.Element {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [videoError, setVideoError] = useState(false)
 
@@ -593,13 +636,13 @@ function VideoPlayer({ item }: { item: MediaItem }): React.JSX.Element {
       src={`serendip://video/${item.id}`}
       autoPlay
       muted
-      controls
       loop
       playsInline
       preload="auto"
       className="w-full h-full object-contain"
       onCanPlay={handleCanPlay}
       onError={handleError}
+      onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); onEnterLock() }}
     />
   )
 }
@@ -887,7 +930,7 @@ function RecommendationsPanel({
       className={clsx(
         'relative flex-shrink-0 overflow-hidden',
         isLight
-          ? 'bg-secondary border-l border-border'
+          ? 'bg-stone-300 border-l border-stone-400'
           : 'bg-black/40 backdrop-blur-md border-l border-white/10',
         'transition-[width] duration-[250ms] ease-out'
       )}
@@ -1033,6 +1076,359 @@ function formatDuration(ms: number): string {
   const s = total % 60
   return `${m}:${s.toString().padStart(2, '0')}`
 }
+
+// ─── 锁定模式：单图 pan/zoom 沉浸查看 ───────────────────────────────────────
+
+interface LockViewportProps {
+  item: MediaItem
+  isLight: boolean
+  closing: boolean
+  onRequestClose: () => void
+}
+
+function LockViewport({ item, isLight, closing, onRequestClose }: LockViewportProps): React.JSX.Element {
+  const viewportRef = useRef<HTMLDivElement | null>(null)
+  const tRef = useRef({ tx: 0, ty: 0, s: 1 })
+  const [t, setT] = useState<{ tx: number; ty: number; s: number }>({ tx: 0, ty: 0, s: 1 })
+
+  // 同步更新 ref + state，避免 render 阶段写 ref
+  const updateT = useCallback((newT: { tx: number; ty: number; s: number }) => {
+    tRef.current = newT
+    setT(newT)
+  }, [])
+
+  // 进出脉冲动效
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setMounted(true))
+    return () => cancelAnimationFrame(raf)
+  }, [])
+
+  // pan cursor 注入
+  const panCursorStyleRef = useRef<HTMLStyleElement | null>(null)
+  const setPanCursor = useCallback((cursor: string | null) => {
+    if (cursor === null) {
+      if (panCursorStyleRef.current) {
+        document.head.removeChild(panCursorStyleRef.current)
+        panCursorStyleRef.current = null
+      }
+      return
+    }
+    if (!panCursorStyleRef.current) {
+      panCursorStyleRef.current = document.createElement('style')
+      document.head.appendChild(panCursorStyleRef.current)
+    }
+    const text = `* { cursor: ${cursor} !important; }`
+    if (panCursorStyleRef.current.textContent !== text) {
+      panCursorStyleRef.current.textContent = text
+    }
+  }, [])
+
+  // 卸载时清除 cursor
+  useEffect(() => {
+    return () => {
+      if (panCursorStyleRef.current) {
+        document.head.removeChild(panCursorStyleRef.current)
+        panCursorStyleRef.current = null
+      }
+    }
+  }, [])
+
+  // 空格键状态
+  const spaceHeldRef = useRef(false)
+  const isPanningRef = useRef(false)
+
+  // F 键复位 + 空格 pan
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.code === 'Space') {
+        e.preventDefault()
+        spaceHeldRef.current = true
+        if (!isPanningRef.current) setPanCursor(CURSOR_HAND_OPEN)
+      } else if (e.key === 'f' || e.key === 'F') {
+        updateT({ tx: 0, ty: 0, s: 1 })
+      }
+    }
+    const onKeyUp = (e: KeyboardEvent): void => {
+      if (e.code === 'Space') {
+        spaceHeldRef.current = false
+        if (!isPanningRef.current) setPanCursor(null)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+    }
+  }, [setPanCursor, updateT])
+
+  // 滚轮缩放（非 passive，必须原生绑定）
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault()
+      const { tx, ty, s } = tRef.current
+      const rect = el.getBoundingClientRect()
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      const delta = e.deltaY > 0 ? -1 : 1
+      const currentLevel = Math.round(Math.log(s) / Math.log(ZOOM_STEP))
+      const newS = clampScale(Math.pow(ZOOM_STEP, currentLevel + delta))
+      const ratio = newS / s
+      updateT({ tx: cx - (cx - tx) * ratio, ty: cy - (cy - ty) * ratio, s: newS })
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [updateT])
+
+  // Pan（中键 or 空格+左键）
+  useEffect(() => {
+    const el = viewportRef.current
+    if (!el) return
+    let startX = 0, startY = 0, startTx = 0, startTy = 0
+
+    const onPointerDown = (e: PointerEvent): void => {
+      const isMid = e.button === 1
+      const isSpaceLeft = e.button === 0 && spaceHeldRef.current
+      if (!isMid && !isSpaceLeft) return
+      e.preventDefault()
+      startX = e.clientX
+      startY = e.clientY
+      startTx = tRef.current.tx
+      startTy = tRef.current.ty
+      isPanningRef.current = true
+      el.setPointerCapture(e.pointerId)
+      setPanCursor(CURSOR_HAND_GRAB)
+    }
+    const onPointerMove = (e: PointerEvent): void => {
+      if (!isPanningRef.current) return
+      updateT({ ...tRef.current, tx: startTx + e.clientX - startX, ty: startTy + e.clientY - startY })
+    }
+    const onPointerUp = (): void => {
+      if (!isPanningRef.current) return
+      isPanningRef.current = false
+      setPanCursor(spaceHeldRef.current ? CURSOR_HAND_OPEN : null)
+    }
+    el.addEventListener('pointerdown', onPointerDown)
+    el.addEventListener('pointermove', onPointerMove)
+    el.addEventListener('pointerup', onPointerUp)
+    el.addEventListener('pointercancel', onPointerUp)
+    return () => {
+      el.removeEventListener('pointerdown', onPointerDown)
+      el.removeEventListener('pointermove', onPointerMove)
+      el.removeEventListener('pointerup', onPointerUp)
+      el.removeEventListener('pointercancel', onPointerUp)
+    }
+  }, [setPanCursor, updateT])
+
+  // 视频 ref
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+
+  // 进出脉冲 inline style
+  const pulseStyle: React.CSSProperties = {
+    scale: mounted && !closing ? '1' : '1.05',
+    opacity: mounted && !closing ? 1 : 0,
+    transition: 'scale 0.28s ease-out, opacity 0.28s ease-out',
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  }
+
+  return (
+    <div
+      ref={viewportRef}
+      className={clsx('absolute inset-0 z-30 overflow-hidden', isLight ? 'bg-stone-300' : 'bg-black')}
+      onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation(); onRequestClose() }}
+    >
+      {/* 进出脉冲 wrapper */}
+      <div style={pulseStyle}>
+        {/* pan/zoom 变换层 */}
+        <div
+          className="w-full h-full"
+          style={{
+            transform: `translate(${t.tx}px, ${t.ty}px) scale(${t.s})`,
+            transformOrigin: '0 0',
+          }}
+        >
+          {item.type === 'video' ? (
+            <video
+              ref={videoRef}
+              src={`serendip://video/${item.id}`}
+              autoPlay
+              muted
+              loop
+              playsInline
+              className="w-full h-full object-contain"
+              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+            />
+          ) : (
+            <LockImage item={item} />
+          )}
+        </div>
+      </div>
+
+      {/* 左上角退出按钮（复刻原后退样式，图标换 X） */}
+      <button
+        onClick={onRequestClose}
+        aria-label="退出锁定"
+        className={clsx(
+          'absolute left-4 top-3 z-40 grid place-items-center p-3 rounded-full transition-colors focus:outline-none focus-visible:outline-none backdrop-blur-sm',
+          isLight ? 'bg-white/70 text-gray-900 hover:bg-white/85' : 'bg-black/45 text-white hover:bg-black/65'
+        )}
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+      >
+        <X className="w-6 h-6" />
+      </button>
+
+      {/* 视频进度条 */}
+      {item.type === 'video' && <VideoScrubber videoRef={videoRef} />}
+    </div>
+  )
+}
+
+function LockImage({ item }: { item: MediaItem }): React.JSX.Element {
+  const [fullLoaded, setFullLoaded] = useState(false)
+  const [error, setError] = useState(false)
+  useEffect(() => { setFullLoaded(false); setError(false) }, [item.id])
+  if (error) return (
+    <div className="flex flex-col items-center gap-3 text-muted-foreground">
+      <ImageOff className="w-12 h-12" />
+      <p className="text-sm">无法加载图片</p>
+    </div>
+  )
+  return (
+    <div className="relative w-full h-full flex items-center justify-center">
+      {!fullLoaded && (
+        <img src={`serendip://thumb/${item.id}`} alt="" className="absolute max-w-full max-h-full object-contain select-none pointer-events-none" draggable={false} />
+      )}
+      <img
+        src={`serendip://image/${item.id}`}
+        alt=""
+        className="absolute max-w-full max-h-full object-contain select-none"
+        draggable={false}
+        style={{ opacity: fullLoaded ? 1 : 0 }}
+        onLoad={() => setFullLoaded(true)}
+        onError={() => setError(true)}
+      />
+    </div>
+  )
+}
+
+interface VideoScrubberProps {
+  videoRef: React.RefObject<HTMLVideoElement | null>
+}
+
+function VideoScrubber({ videoRef }: VideoScrubberProps): React.JSX.Element {
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const [playing, setPlaying] = useState(true)
+  const [barVisible, setBarVisible] = useState(false)
+  const [seeking, setSeeking] = useState(false)
+  const trackRef = useRef<HTMLDivElement | null>(null)
+
+  // 驱动进度
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v) return
+    const onTimeUpdate = (): void => setCurrentTime(v.currentTime)
+    const onLoaded = (): void => setDuration(v.duration || 0)
+    const onPlay = (): void => setPlaying(true)
+    const onPause = (): void => setPlaying(false)
+    v.addEventListener('timeupdate', onTimeUpdate)
+    v.addEventListener('loadedmetadata', onLoaded)
+    v.addEventListener('play', onPlay)
+    v.addEventListener('pause', onPause)
+    return () => {
+      v.removeEventListener('timeupdate', onTimeUpdate)
+      v.removeEventListener('loadedmetadata', onLoaded)
+      v.removeEventListener('play', onPlay)
+      v.removeEventListener('pause', onPause)
+    }
+  }, [videoRef])
+
+  // 鼠标距底部阈值显隐
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      if (seeking) return
+      setBarVisible(window.innerHeight - e.clientY < 140)
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  }, [seeking])
+
+  const seekTo = useCallback((e: React.MouseEvent | MouseEvent): void => {
+    const track = trackRef.current
+    const v = videoRef.current
+    if (!track || !v || !duration) return
+    const rect = track.getBoundingClientRect()
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
+    v.currentTime = ratio * duration
+    setCurrentTime(ratio * duration)
+  }, [videoRef, duration])
+
+  const handleTrackDown = useCallback((e: React.PointerEvent): void => {
+    e.preventDefault()
+    setSeeking(true)
+    setBarVisible(true)
+    seekTo(e.nativeEvent)
+    const onMove = (ev: MouseEvent): void => seekTo(ev)
+    const onUp = (): void => {
+      setSeeking(false)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [seekTo])
+
+  const togglePlay = useCallback((): void => {
+    const v = videoRef.current
+    if (!v) return
+    if (v.paused) v.play().catch(() => { /* ignore */ })
+    else v.pause()
+  }, [videoRef])
+
+  const visible = barVisible || seeking
+  const progress = duration > 0 ? currentTime / duration : 0
+
+  return (
+    <div
+      className={clsx(
+        'absolute bottom-0 left-0 right-0 z-40 px-4 pb-4 pt-3 flex items-center gap-3',
+        'bg-glass backdrop-blur-xl transition-[opacity,pointer-events] duration-200',
+        visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+      )}
+    >
+      <button onClick={togglePlay} className="flex-shrink-0 text-foreground focus:outline-none">
+        {playing ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+      </button>
+      <span className="text-foreground text-xs tabular-nums flex-shrink-0 select-none">
+        {formatDuration(currentTime * 1000)} / {formatDuration(duration * 1000)}
+      </span>
+      {/* 进度轨道 */}
+      <div
+        ref={trackRef}
+        className="flex-1 h-1.5 rounded-full bg-foreground/20 relative cursor-pointer"
+        onPointerDown={handleTrackDown}
+      >
+        <div
+          className="absolute left-0 top-0 h-full rounded-full bg-primary"
+          style={{ width: `${progress * 100}%` }}
+        />
+        {/* 拖拽点 */}
+        <div
+          className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-primary shadow-md"
+          style={{ left: `calc(${progress * 100}% - 7px)` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 
 /**
  * 面包屑组件：显示当前图从 rootPath 起的各级目录，可点击收窄/扩大抽样范围。
