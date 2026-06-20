@@ -9,6 +9,19 @@ import { registerThumbProtocol } from './thumbnailer/protocol'
 import { scanRoot } from './scanner'
 import { startWatcher, stopWatcher } from './watcher'
 
+// 修复 Windows 多平面叠加（MPO）导致的全屏色彩闪烁：
+// 视频 hover 播放时，Chromium 会把 <video> 提升为 DirectComposition 硬件叠加平面，
+// Windows 在叠加平面出现/消失瞬间会切换整块显示器的色彩/HDR 管线，
+// 表现为整个桌面（含 app 窗口外）骤然变暗+过饱和、几秒后自行恢复。
+// 关闭视频叠加平面即可消除该现象，硬件解码与合成仍保留。
+app.commandLine.appendSwitch(
+  'disable-features',
+  'DirectCompositionVideoOverlays,UseMultiPlaneOverlayForVideo'
+)
+// 兜底升级：若个别 GPU/驱动上述精准开关仍压不住闪烁，再放开下面这行
+// （彻底关闭 DirectComposition，代价是合成性能下降、可能引入其它渲染瑕疵）。
+// app.commandLine.appendSwitch('disable-direct-composition')
+
 // 必须在 app.whenReady 之前注册协议特权
 protocol.registerSchemesAsPrivileged([
   {
