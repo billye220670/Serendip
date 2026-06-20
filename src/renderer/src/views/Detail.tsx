@@ -254,27 +254,25 @@ export function DetailView(): React.JSX.Element | null {
     return undefined
   }, [isOpen])
 
-  // 滚轮：基于 deltaY 累积，每达到 WHEEL_THRESHOLD 才切一张。
-  // 与 wheel 事件密度解耦 —— 鼠标滚轮一刻度 ≈ 100~120，触控板按物理滑动距离累计；
-  // 没有时间节流，缩略图随用户操作立即响应，大图各自异步加载到位时由 ImageViewer 内部 swap。
-  const accumRef = useRef(0)
-  const WHEEL_THRESHOLD = 100
+  // 滚轮翻图：时间冷却 + 单步。
+  // 无极/高分辨率滚轮单个 wheel 事件的 deltaY 可达数百乃至上千；旧的「deltaY 累积过阈值」
+  // 模型会在一个事件里 while 循环翻多张，暴力滚动 + 惯性动量事件叠加时造成高亮乱跳、
+  // 反向来回弹、最终卡死。改为：每次翻图后进入冷却窗，窗内所有 wheel 事件（含反向时仍在
+  // 派发的惯性动量事件）一律忽略，单个事件最多翻 1 张 —— 把任意密度的滚轮输入规整成匀速翻页。
+  // 不区分方向地统一冷却：正常主动反向时上一次翻图早已超过冷却窗，反向几乎零延迟；
+  // 只有「连续快速翻图途中突然反向」才有 ≤80ms 延迟，而这正是需要被稳住的暴力场景。
+  const lastFlipRef = useRef(0)
+  const WHEEL_COOLDOWN = 80 // ms
+  const WHEEL_DEADZONE = 2 // 忽略亚像素/零位噪声（横向滚动会派发 deltaY≈0 的事件）
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.stopPropagation()
     if (lockState !== 'off') return
-    // 反向滚动：先把累计值归零，避免反向时还要先消耗掉同向余量
-    if (accumRef.current !== 0 && Math.sign(e.deltaY) !== Math.sign(accumRef.current)) {
-      accumRef.current = 0
-    }
-    accumRef.current += e.deltaY
-    while (accumRef.current >= WHEEL_THRESHOLD) {
-      next()
-      accumRef.current -= WHEEL_THRESHOLD
-    }
-    while (accumRef.current <= -WHEEL_THRESHOLD) {
-      prev()
-      accumRef.current += WHEEL_THRESHOLD
-    }
+    if (Math.abs(e.deltaY) < WHEEL_DEADZONE) return
+    const now = e.timeStamp
+    if (now - lastFlipRef.current < WHEEL_COOLDOWN) return
+    lastFlipRef.current = now
+    if (e.deltaY > 0) next()
+    else prev()
   }, [next, prev, lockState])
 
   // 键盘：Esc / ←→ / 空格 / Tab。
