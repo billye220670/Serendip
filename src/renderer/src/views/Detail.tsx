@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Pause, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp, X, Video } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Pause, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp, X, Video, Lock } from 'lucide-react'
 import clsx from 'clsx'
 import { clampScale, ZOOM_STEP } from '../lib/canvasMath'
 import { CURSOR_HAND_OPEN, CURSOR_HAND_GRAB } from '../lib/handCursor'
 import { useCameraShake } from '../hooks/useCameraShake'
 import { useCameraShakeStore } from '../stores/cameraShake'
 import { CameraShakeControls } from './canvas/CameraShakeControls'
-import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
+import { useDetailStore, type Cell } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
 import { usePanelRecommendationsStore } from '../stores/panelRecommendations'
@@ -28,14 +28,16 @@ import type { MediaItem } from '../../../main/recommender'
  */
 export function DetailView(): React.JSX.Element | null {
   const isOpen = useDetailStore((s) => s.isOpen)
-  const sequence = useDetailStore((s) => s.sequence)
+  const cells = useDetailStore((s) => s.cells)
   const cursor = useDetailStore((s) => s.cursor)
+  const pool = useDetailStore((s) => s.pool)
   const scopePath = useDetailStore((s) => s.scopePath)
   const setScope = useDetailStore((s) => s.setScope)
   const close = useDetailStore((s) => s.close)
   const next = useDetailStore((s) => s.next)
   const prev = useDetailStore((s) => s.prev)
   const jumpTo = useDetailStore((s) => s.jumpTo)
+  const togglePin = useDetailStore((s) => s.togglePin)
   const rootPath = useLibraryStore((s) => s.rootPath)
   const panelOpen = useUIStore((s) => s.detailPanelOpen)
   const togglePanel = useUIStore((s) => s.toggleDetailPanel)
@@ -50,7 +52,7 @@ export function DetailView(): React.JSX.Element | null {
     return () => { window.electron.ipcRenderer.removeAllListeners(IPC.FULLSCREEN_CHANGE) }
   }, [])
 
-  const currentItem = sequence[cursor]?.item ?? null
+  const currentItem = cells[cursor]?.item ?? null
   const resetPanel = usePanelRecommendationsStore((s) => s.reset)
   const destroyPanel = usePanelRecommendationsStore((s) => s.destroy)
   const loadStats = useLibraryStore((s) => s.loadStats)
@@ -391,7 +393,7 @@ export function DetailView(): React.JSX.Element | null {
 
         {/* 底部缩略图条 */}
         {lockState === 'off' && (
-          <ThumbStrip sequence={sequence} cursor={cursor} jumpTo={jumpTo} />
+          <ThumbStrip cells={cells} cursor={cursor} jumpTo={jumpTo} togglePin={togglePin} />
         )}
 
         {/* 底部左侧操作区：喜欢(f) + 分隔线 + 分类入口(h)，不与缩略图条争位 */}
@@ -528,7 +530,7 @@ export function DetailView(): React.JSX.Element | null {
       <RecommendationsPanel open={panelOpen && lockState === 'off'} />
 
       {/* 预加载下 1-2 张图（不可见） */}
-      <Preloader sequence={sequence} cursor={cursor} />
+      <Preloader pool={pool} />
     </div>
   )
 }
@@ -649,122 +651,136 @@ function VideoPlayer({ item, onEnterLock }: { item: MediaItem; onEnterLock: () =
 }
 
 /**
- * 底部缩略图条 — 传送带式增删动画。
+ * 底部缩略图条 — 槽位式布局 + FLIP 过渡。
  *
  * 显示规则：
- * - 右边界 = 历史访问过的最远位置（visitedMax），不会因回滚而缩减。
- * - 窗口大小最多 BUFFER_SIZE，超过后左侧最旧项滑出。
- * - 当前 cursor 项高亮（白 ring），其余暗色。
+ * - 直接渲染 store 的 `cells`（已是 ≤ BUFFER_SIZE 的可见窗口，含锁定格）。
+ * - 视觉左→右 = cells index；每格绝对定位在 `left = slot*(W+GAP)`。
+ * - 当前 cursor 项高亮（主题色 ring），其余暗化。
+ * - 锁定格右上角叠加 Lock 图标。
  *
- * 动画实现：
- * - 每个项有三相 phase: 'entering' → 'in' → 'leaving'。
- * - inline style 直接控制 width/margin/opacity，避开 CSS keyframe 与 fill-mode 的副作用。
- * - 'entering' 第一帧 width=0，下一帧切到 'in'（width=2.5rem），CSS transition 自然滑入。
- * - 'leaving' 把目标值改回 0，transition 滑出；onTransitionEnd 各自从 DOM 移除。
+ * 动画实现（FLIP）：
+ * - 本地渲染表按 key 协调 store cells：存活格更新 slot（CSS 过渡 `left` → 平移），
+ *   锁定格 slot 不变 → 零位移（停在原位）；未锁定格 slot 改变 → 左移越过锁定格。
+ * - 新进格 phase 'entering'（opacity 0 / scale .9）→ 下一帧切 'in' 淡入。
+ * - 离场格（从 cells 消失的 key）标 'leaving'，原地淡出；onTransitionEnd 后移除。
  */
 const THUMB_W_PX = 52
 const THUMB_GAP_PX = 7
 
+type ThumbPhase = 'entering' | 'in' | 'leaving'
+interface ThumbRItem {
+  key: number
+  mediaId: number
+  pinned: boolean
+  slot: number
+  phase: ThumbPhase
+}
+
 function ThumbStrip({
-  sequence,
+  cells,
   cursor,
   jumpTo,
+  togglePin,
 }: {
-  sequence: SeqEntry[]
+  cells: Cell[]
   cursor: number
   jumpTo: (index: number) => void
+  togglePin: (key: number) => void
 }): React.JSX.Element | null {
-  const current = sequence[cursor] ?? null
-
-  type Phase = 'entering' | 'in' | 'leaving'
-  // key = SeqEntry.key（序列内唯一，可重复同一 mediaId）；mediaId 仅用于取缩略图
-  type Entry = { key: number; mediaId: number; phase: Phase }
-
-  const [entries, setEntries] = useState<Entry[]>(() =>
-    current ? [{ key: current.key, mediaId: current.item.id, phase: 'in' }] : []
+  const [rendered, setRendered] = useState<ThumbRItem[]>(() =>
+    cells.map((c, i) => ({
+      key: c.key,
+      mediaId: c.item.id,
+      pinned: c.pinned,
+      slot: i,
+      phase: 'in' as ThumbPhase,
+    }))
   )
 
-  // 每次 current 变化，把它纳入条目（顺序：保留已有 + 当前在最右）
+  // 协调 store cells → 本地渲染表
   useEffect(() => {
-    if (!current) return
-    setEntries((prev) => {
-      const aliveKeys = new Set(prev.filter((e) => e.phase !== 'leaving').map((e) => e.key))
-      let next: Entry[] = prev
+    setRendered((prev) => {
+      const liveKeys = new Set(cells.map((c) => c.key))
+      const prevByKey = new Map(prev.map((r) => [r.key, r]))
+      const next: ThumbRItem[] = []
 
-      if (!aliveKeys.has(current.key)) {
-        next = [...prev, { key: current.key, mediaId: current.item.id, phase: 'entering' }]
-      }
-      // 否则当前项已在条目里（回滚到历史项），只更新高亮即可，无结构变化
+      // 1) store 中的每格：存活则更新 slot/pinned（保持淡入），否则新进
+      cells.forEach((c, i) => {
+        const old = prevByKey.get(c.key)
+        if (old && old.phase !== 'leaving') {
+          next.push({ ...old, mediaId: c.item.id, pinned: c.pinned, slot: i, phase: 'in' })
+        } else {
+          next.push({ key: c.key, mediaId: c.item.id, pinned: c.pinned, slot: i, phase: 'entering' })
+        }
+      })
 
-      // 控制活跃项总数 ≤ BUFFER_SIZE：超过则把最早的活跃项标 leaving
-      const aliveAfter = next.filter((e) => e.phase !== 'leaving')
-      const overflow = aliveAfter.length - BUFFER_SIZE
-      if (overflow > 0) {
-        let toMark = overflow
-        next = next.map((e) => {
-          if (toMark > 0 && e.phase !== 'leaving') {
-            toMark--
-            return { ...e, phase: 'leaving' as Phase }
-          }
-          return e
-        })
-      }
+      // 2) 不在 store 中的旧项：标 leaving（保留其 slot 以原地淡出），已 leaving 的继续保留
+      prev.forEach((r) => {
+        if (liveKeys.has(r.key)) return
+        next.push(r.phase === 'leaving' ? r : { ...r, phase: 'leaving' })
+      })
 
       return next
     })
-  }, [current])
+  }, [cells])
 
-  // entering → in：下一帧切相，触发 width transition
+  // entering → in：下一帧切相，触发淡入
   useEffect(() => {
-    if (!entries.some((e) => e.phase === 'entering')) return
+    if (!rendered.some((r) => r.phase === 'entering')) return
     const raf = requestAnimationFrame(() => {
-      setEntries((prev) =>
-        prev.map((e) => (e.phase === 'entering' ? { ...e, phase: 'in' } : e))
-      )
+      setRendered((prev) => prev.map((r) => (r.phase === 'entering' ? { ...r, phase: 'in' } : r)))
     })
     return () => cancelAnimationFrame(raf)
-  }, [entries])
+  }, [rendered])
 
-  if (!current) return null
+  if (cells.length === 0) return null
 
-  // 通过 key 反查 sequence 中的下标（用于点击跳转）
-  const keyToIndex = new Map<number, number>()
-  for (let i = 0; i < sequence.length; i++) keyToIndex.set(sequence[i].key, i)
+  const currentKey = cells[cursor]?.key
+  const containerW = cells.length * THUMB_W_PX + Math.max(0, cells.length - 1) * THUMB_GAP_PX
 
   return (
-    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex z-10">
-      {entries.map(({ key, mediaId, phase }) => {
-        const isCurrent = key === current.key
-        const collapsed = phase === 'entering' || phase === 'leaving'
-        const targetIndex = keyToIndex.get(key)
+    <div
+      className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10"
+      style={{ height: THUMB_W_PX, width: containerW }}
+    >
+      {rendered.map((r) => {
+        const isCurrent = r.key === currentKey
+        const collapsed = r.phase === 'entering' || r.phase === 'leaving'
         return (
           <button
-            key={key}
+            key={r.key}
             onClick={() => {
-              if (phase !== 'in') return
-              if (targetIndex !== undefined) jumpTo(targetIndex)
+              if (r.phase !== 'in') return
+              const idx = cells.findIndex((c) => c.key === r.key)
+              if (idx >= 0) jumpTo(idx)
+            }}
+            onDoubleClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              if (r.phase !== 'in') return
+              togglePin(r.key)
             }}
             className={clsx(
-              'thumb-strip-item h-[52px] rounded focus:outline-none',
+              'thumb-strip-item absolute top-0 h-[52px] w-[52px] rounded focus:outline-none',
               isCurrent && 'ring-2 ring-primary'
             )}
             style={{
-              width: collapsed ? 0 : THUMB_W_PX,
-              marginRight: collapsed ? 0 : THUMB_GAP_PX,
+              left: r.slot * (THUMB_W_PX + THUMB_GAP_PX),
               opacity: collapsed ? 0 : 1,
-              pointerEvents: phase === 'in' ? 'auto' : 'none',
+              transform: collapsed ? 'scale(0.9)' : 'scale(1)',
+              transition: 'left 200ms ease, opacity 200ms ease, transform 200ms ease',
+              pointerEvents: r.phase === 'in' ? 'auto' : 'none',
             }}
             onTransitionEnd={(e) => {
-              if (e.propertyName !== 'width') return
-              if (phase !== 'leaving') return
-              setEntries((prev) =>
-                prev.filter((x) => !(x.key === key && x.phase === 'leaving'))
-              )
+              if (e.propertyName !== 'opacity') return
+              if (r.phase !== 'leaving') return
+              setRendered((prev) => prev.filter((x) => !(x.key === r.key && x.phase === 'leaving')))
             }}
           >
             <div className="relative w-full h-full rounded overflow-hidden">
               <img
-                src={`serendip://thumb/${mediaId}`}
+                src={`serendip://thumb/${r.mediaId}`}
                 alt=""
                 className="w-full h-full object-cover"
                 draggable={false}
@@ -776,6 +792,12 @@ function ThumbStrip({
                   isCurrent ? 'bg-transparent' : 'bg-black/60 hover:bg-black/35'
                 )}
               />
+              {/* 锁定叠加：lucide Lock，始终可见 */}
+              {r.pinned && (
+                <div className="absolute top-0.5 right-0.5 grid place-items-center w-4 h-4 rounded-full bg-black/60 backdrop-blur">
+                  <Lock className="w-2.5 h-2.5 text-white" />
+                </div>
+              )}
             </div>
           </button>
         )
@@ -784,24 +806,14 @@ function ThumbStrip({
   )
 }
 
-/** 预加载下 1-2 张图（用隐藏 img 预热浏览器缓存） */
-function Preloader({
-  sequence,
-  cursor,
-}: {
-  sequence: SeqEntry[]
-  cursor: number
-}): React.JSX.Element {
-  const preloadItems = sequence.slice(cursor + 1, cursor + 3)
+/** 预加载接下来 1-2 张接力图（用隐藏 img 预热浏览器缓存） */
+function Preloader({ pool }: { pool: MediaItem[] }): React.JSX.Element {
+  const preloadItems = pool.slice(0, 2)
   return (
     <div className="sr-only" aria-hidden>
-      {preloadItems.map((e) =>
-        e.item.type === 'image' ? (
-          <img
-            key={e.key}
-            src={`serendip://image/${e.item.id}`}
-            alt=""
-          />
+      {preloadItems.map((m, i) =>
+        m.type === 'image' ? (
+          <img key={`${m.id}-${i}`} src={`serendip://image/${m.id}`} alt="" />
         ) : null
       )}
     </div>
