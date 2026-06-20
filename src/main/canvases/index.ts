@@ -49,6 +49,18 @@ export interface CanvasItemInput {
   rotation?: number
 }
 
+/** 完整变换输入：w/h/rotation/clipPolygon 原样写入（复制/粘贴/再制用，保真不重算尺寸） */
+export interface CanvasItemFullInput {
+  fileId: number
+  x: number
+  y: number
+  w: number
+  h: number
+  z: number
+  rotation: number
+  clipPolygon: string | null
+}
+
 export interface CanvasItemPatch {
   id: number
   x?: number
@@ -189,6 +201,42 @@ export function addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): nu
         h = Math.round(CANVAS_DISPLAY_W * (dims.height / dims.width))
       }
       const r = insert.run(canvasId, item.fileId, item.x, item.y, w, h, item.z, item.rotation ?? 0)
+      ids.push(Number(r.lastInsertRowid))
+    }
+  })
+  txn(items)
+  return ids
+}
+
+/**
+ * 把多个媒体项按给定的完整变换原样插入画布（含 w/h/rotation/clipPolygon）。
+ * 与 addItemsToCanvas 不同：不依据文件原始宽高重算尺寸，用于复制/粘贴/再制保真。
+ * 返回新建的 canvas_item id 列表。
+ */
+export function addItemsToCanvasRaw(canvasId: number, items: CanvasItemFullInput[]): number[] {
+  if (items.length === 0) return []
+  const db = getDatabase()
+
+  const canvas = db.prepare('SELECT id FROM canvases WHERE id = ?').get(canvasId)
+  if (!canvas) throw new Error('画布不存在')
+
+  const insert = db.prepare(
+    'INSERT INTO canvas_items (canvas_id, file_id, x, y, w, h, z, rotation, clip_polygon) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  )
+  const ids: number[] = []
+  const txn = db.transaction((inputs: CanvasItemFullInput[]) => {
+    for (const item of inputs) {
+      const r = insert.run(
+        canvasId,
+        item.fileId,
+        item.x,
+        item.y,
+        item.w,
+        item.h,
+        item.z,
+        item.rotation,
+        item.clipPolygon
+      )
       ids.push(Number(r.lastInsertRowid))
     }
   })

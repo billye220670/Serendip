@@ -4,7 +4,7 @@ import type { SerendipAPI } from '../main/ipc/contract'
 import { IPC } from '../main/ipc/contract'
 import type { ScanProgress } from '../main/scanner'
 import type { ExploreMode } from '../main/recommender'
-import type { CanvasItemInput, CanvasItemPatch } from '../main/canvases'
+import type { CanvasItemInput, CanvasItemFullInput, CanvasItemPatch } from '../main/canvases'
 
 const api: SerendipAPI = {
   selectRootDirectory: () => ipcRenderer.invoke(IPC.SELECT_ROOT),
@@ -60,6 +60,8 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.GET_CANVAS_ITEMS, canvasId),
   addItemsToCanvas: (canvasId: number, items: CanvasItemInput[]) =>
     ipcRenderer.invoke(IPC.ADD_ITEMS_TO_CANVAS, canvasId, items),
+  addItemsToCanvasRaw: (canvasId: number, items: CanvasItemFullInput[]) =>
+    ipcRenderer.invoke(IPC.ADD_ITEMS_TO_CANVAS_RAW, canvasId, items),
   removeItemsFromCanvas: (canvasId: number, itemIds: number[]) =>
     ipcRenderer.invoke(IPC.REMOVE_ITEMS_FROM_CANVAS, canvasId, itemIds),
   updateCanvasItem: (itemId: number, patch: Omit<CanvasItemPatch, 'id'>) =>

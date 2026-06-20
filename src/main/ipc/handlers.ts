@@ -24,12 +24,14 @@ import {
   reorderCanvases,
   getCanvasItems,
   addItemsToCanvas,
+  addItemsToCanvasRaw,
   removeItemsFromCanvas,
   updateCanvasItem,
   updateCanvasItems,
   updateCanvasViewport,
   getFileCanvasIds,
   type CanvasItemInput,
+  type CanvasItemFullInput,
   type CanvasItemPatch
 } from '../canvases'
 import { startWatcher } from '../watcher'
@@ -222,6 +224,10 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC.ADD_ITEMS_TO_CANVAS, (_event, canvasId: number, items: CanvasItemInput[]) =>
     addItemsToCanvas(canvasId, items)
+  )
+  ipcMain.handle(
+    IPC.ADD_ITEMS_TO_CANVAS_RAW,
+    (_event, canvasId: number, items: CanvasItemFullInput[]) => addItemsToCanvasRaw(canvasId, items)
   )
   ipcMain.handle(IPC.REMOVE_ITEMS_FROM_CANVAS, (_event, canvasId: number, itemIds: number[]) =>
     removeItemsFromCanvas(canvasId, itemIds)

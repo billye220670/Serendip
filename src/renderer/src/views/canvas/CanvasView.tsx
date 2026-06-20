@@ -8,6 +8,7 @@ import { useCanvasesStore } from '../../stores/canvases'
 import { useCanvasItemsStore } from '../../stores/canvasItems'
 import { useCanvasViewportStore, flushViewportNow } from '../../stores/canvasViewport'
 import { useCanvasSelectionStore } from '../../stores/canvasSelection'
+import { useCanvasClipboardStore } from '../../stores/canvasClipboard'
 import { useCanvasUndoStore } from '../../stores/canvasUndo'
 import { useUIStore } from '../../stores/ui'
 import { useCameraShakeStore } from '../../stores/cameraShake'
@@ -17,14 +18,15 @@ import {
   clampScale,
   DEFAULT_VIEWPORT,
   ZOOM_STEP,
-  screenToWorld
+  screenToWorld,
+  aabbOfRotatedRect
 } from '../../lib/canvasMath'
 import { cropItem, scaleClipContent, parseClipData } from '../../lib/clipPolygon'
 import { navigateDirection, panToItem } from '../../lib/canvasNavigate'
 import { CURSOR_HAND_OPEN, CURSOR_HAND_GRAB } from '../../lib/handCursor'
 import { CanvasItemNode } from './CanvasItemNode'
 import { CanvasToolbar } from './CanvasToolbar'
-import type { CanvasItemPatch } from '../../../../main/canvases'
+import type { CanvasItemPatch, CanvasItemFullInput } from '../../../../main/canvases'
 
 // 自定义 resize cursor — 原始 SVG 为水平双箭头（←→），对应 0° / ew-resize
 const RESIZE_ICON_PATH =
@@ -214,6 +216,8 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   }, [containerEl])
   const spaceHeldRef = useRef(false)
   const isPanningRef = useRef(false)
+  // 最近一次指针在视口内的客户端坐标（用于 Ctrl+V 粘贴到光标处）
+  const pointerClientRef = useRef<{ x: number; y: number } | null>(null)
   const panStartRef = useRef<{
     clientX: number
     clientY: number
@@ -421,6 +425,17 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     return () => container.removeEventListener('wheel', onWheel)
   }, [canvasId, setViewport])
 
+  // ── 跟踪光标位置（粘贴定位用）──
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const onMove = (e: PointerEvent): void => {
+      pointerClientRef.current = { x: e.clientX, y: e.clientY }
+    }
+    container.addEventListener('pointermove', onMove)
+    return () => container.removeEventListener('pointermove', onMove)
+  }, [containerEl])
+
   // ── 中键 / Space+左键 Pan ──
   useEffect(() => {
     const container = containerRef.current
@@ -609,6 +624,136 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     }
   }, [canvasId, updateItems, setPanCursor])
 
+  // ── 复制 / 粘贴 / 再制（Ctrl+C / Ctrl+V / Ctrl+D）──
+  // 取当前选区的完整变换快照
+  const buildClipsFromSelection = useCallback(() => {
+    const selSet = useCanvasSelectionStore.getState().selected
+    const allItems = useCanvasItemsStore.getState().items
+    return allItems
+      .filter((it) => selSet.has(it.id))
+      .map((it) => ({
+        fileId: it.fileId,
+        x: it.x,
+        y: it.y,
+        w: it.w,
+        h: it.h,
+        rotation: it.rotation,
+        clipPolygon: it.clipPolygon
+      }))
+  }, [])
+
+  // 把一组完整变换输入加入画布 → 重新加载 → 选中新元素 → 压入可撤销栈
+  const addItemsWithUndo = useCallback(
+    async (inputs: CanvasItemFullInput[]): Promise<void> => {
+      if (inputs.length === 0) return
+      const snapshot = inputs
+      const newIds = await window.api.addItemsToCanvasRaw(canvasId, snapshot)
+      await useCanvasItemsStore.getState().load(canvasId)
+      useCanvasSelectionStore.getState().select(newIds)
+      requestAnimationFrame(() => moveableRef.current?.updateRect())
+
+      // 撤销：删除新元素；重做：以相同变换再次插入（新 id）并重新选中
+      const idsRef = { current: newIds }
+      useCanvasUndoStore.getState().push({
+        apply: async () => {
+          const ids = await window.api.addItemsToCanvasRaw(canvasId, snapshot)
+          idsRef.current = ids
+          await useCanvasItemsStore.getState().load(canvasId)
+          useCanvasSelectionStore.getState().select(ids)
+          requestAnimationFrame(() => moveableRef.current?.updateRect())
+        },
+        revert: async () => {
+          await useCanvasItemsStore.getState().removeItems(canvasId, idsRef.current)
+          useCanvasSelectionStore.getState().clear()
+          moveableRef.current?.updateRect()
+        }
+      })
+    },
+    [canvasId]
+  )
+
+  const handleCopy = useCallback(() => {
+    if (useCameraShakeStore.getState().enabled) return
+    const clips = buildClipsFromSelection()
+    if (clips.length > 0) useCanvasClipboardStore.getState().setClips(clips)
+  }, [buildClipsFromSelection])
+
+  const handlePaste = useCallback(() => {
+    if (useCameraShakeStore.getState().enabled) return
+    const clips = useCanvasClipboardStore.getState().clips
+    if (clips.length === 0) return
+    const container = containerRef.current
+    if (!container) return
+    const cr = container.getBoundingClientRect()
+    const vpNow = useCanvasViewportStore.getState().byId[canvasId] ?? DEFAULT_VIEWPORT
+
+    // 组包围盒中心（世界坐标）
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const c of clips) {
+      const a = aabbOfRotatedRect(c.x, c.y, c.w, c.h, c.rotation)
+      if (a.minX < minX) minX = a.minX
+      if (a.minY < minY) minY = a.minY
+      if (a.maxX > maxX) maxX = a.maxX
+      if (a.maxY > maxY) maxY = a.maxY
+    }
+    const groupCx = (minX + maxX) / 2
+    const groupCy = (minY + maxY) / 2
+
+    // 目标中心：光标在视口内则用光标，否则用视口中心
+    const p = pointerClientRef.current
+    let screenX: number
+    let screenY: number
+    if (p && p.x >= cr.left && p.x <= cr.right && p.y >= cr.top && p.y <= cr.bottom) {
+      screenX = p.x - cr.left
+      screenY = p.y - cr.top
+    } else {
+      screenX = cr.width / 2
+      screenY = cr.height / 2
+    }
+    const [targetCx, targetCy] = screenToWorld(screenX, screenY, vpNow)
+    const dx = targetCx - groupCx
+    const dy = targetCy - groupCy
+
+    const allItems = useCanvasItemsStore.getState().items
+    const maxZ = allItems.length > 0 ? Math.max(...allItems.map((it) => it.z)) : 0
+
+    const inputs: CanvasItemFullInput[] = clips.map((c, i) => ({
+      fileId: c.fileId,
+      x: c.x + dx,
+      y: c.y + dy,
+      w: c.w,
+      h: c.h,
+      rotation: c.rotation,
+      z: maxZ + i + 1,
+      clipPolygon: c.clipPolygon
+    }))
+    void addItemsWithUndo(inputs)
+  }, [canvasId, addItemsWithUndo])
+
+  const handleDuplicate = useCallback(() => {
+    if (useCameraShakeStore.getState().enabled) return
+    const clips = buildClipsFromSelection()
+    if (clips.length === 0) return
+    const allItems = useCanvasItemsStore.getState().items
+    const maxZ = allItems.length > 0 ? Math.max(...allItems.map((it) => it.z)) : 0
+    // 原地偏移一点（世界坐标），与原件区分
+    const OFFSET = 30
+    const inputs: CanvasItemFullInput[] = clips.map((c, i) => ({
+      fileId: c.fileId,
+      x: c.x + OFFSET,
+      y: c.y + OFFSET,
+      w: c.w,
+      h: c.h,
+      rotation: c.rotation,
+      z: maxZ + i + 1,
+      clipPolygon: c.clipPolygon
+    }))
+    void addItemsWithUndo(inputs)
+  }, [buildClipsFromSelection, addItemsWithUndo])
+
   // ── Space / F / Esc / Ctrl+A / Delete / [/] 层级 / Ctrl+Z/Y / 方向键 ──
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -634,6 +779,15 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
         e.preventDefault()
         useCanvasSelectionStore.getState().selectAll(useCanvasItemsStore.getState().items)
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault()
+        handleCopy()
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault()
+        handlePaste()
+      } else if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+        e.preventDefault()
+        handleDuplicate()
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault()
         const selIds = Array.from(useCanvasSelectionStore.getState().selected)
@@ -763,7 +917,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       window.removeEventListener('keyup', onKeyUp)
       setPanCursor(null)
     }
-  }, [handleFit, selectionClear, canvasId, setPanCursor])
+  }, [handleFit, selectionClear, canvasId, setPanCursor, handleCopy, handlePaste, handleDuplicate])
 
   const vp = viewport
 

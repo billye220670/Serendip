@@ -5,9 +5,9 @@
 import type { ScanProgress } from '../scanner'
 import type { MediaItem, ExploreMode } from '../recommender'
 import type { Category } from '../categories'
-import type { Canvas, CanvasItem, CanvasItemInput, CanvasItemPatch } from '../canvases'
+import type { Canvas, CanvasItem, CanvasItemInput, CanvasItemFullInput, CanvasItemPatch } from '../canvases'
 
-export type { Canvas, CanvasItem, CanvasItemInput, CanvasItemPatch }
+export type { Canvas, CanvasItem, CanvasItemInput, CanvasItemFullInput, CanvasItemPatch }
 
 // 主进程暴露给渲染进程的 API
 export interface SerendipAPI {
@@ -57,6 +57,7 @@ export interface SerendipAPI {
   reorderCanvases(orderedIds: number[]): Promise<void>
   getCanvasItems(canvasId: number): Promise<CanvasItem[]>
   addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): Promise<number[]>
+  addItemsToCanvasRaw(canvasId: number, items: CanvasItemFullInput[]): Promise<number[]>
   removeItemsFromCanvas(canvasId: number, itemIds: number[]): Promise<void>
   updateCanvasItem(itemId: number, patch: Omit<CanvasItemPatch, 'id'>): Promise<void>
   updateCanvasItems(patches: CanvasItemPatch[]): Promise<void>
@@ -113,6 +114,7 @@ export const IPC = {
   REORDER_CANVASES: 'serendip:reorderCanvases',
   GET_CANVAS_ITEMS: 'serendip:getCanvasItems',
   ADD_ITEMS_TO_CANVAS: 'serendip:addItemsToCanvas',
+  ADD_ITEMS_TO_CANVAS_RAW: 'serendip:addItemsToCanvasRaw',
   REMOVE_ITEMS_FROM_CANVAS: 'serendip:removeItemsFromCanvas',
   UPDATE_CANVAS_ITEM: 'serendip:updateCanvasItem',
   UPDATE_CANVAS_ITEMS: 'serendip:updateCanvasItems',
