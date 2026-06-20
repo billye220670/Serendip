@@ -1198,6 +1198,10 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
         keepRatio={true}
         renderDirections={['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']}
         rotationPosition="none"
+        // 整组框始终用 AABB（rotation=0），即使所有选中元素恰好同角度也不跟着转。
+        // 否则旋转一组同角度元素后，Moveable 检测到 isSameRotation 会把整组框转到该角度，
+        // 留下一个斜的操纵框（设计要求松手后恢复成新 AABB；旋转中的斜框由 CornerRotateOverlay 自绘）。
+        useDefaultGroupRotate={true}
         snappable={false}
         origin={false}
         // 多选时整体框的中央拖拽区改为穿透（pointer-events:none），
