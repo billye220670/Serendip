@@ -23,6 +23,7 @@ import {
   deleteCanvas,
   reorderCanvases,
   getCanvasItems,
+  getMediaDimensions,
   addItemsToCanvas,
   addItemsToCanvasRaw,
   removeItemsFromCanvas,
@@ -221,6 +222,9 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC.GET_CANVAS_ITEMS, (_event, canvasId: number) =>
     getCanvasItems(canvasId)
+  )
+  ipcMain.handle(IPC.GET_MEDIA_DIMENSIONS, (_event, fileIds: number[]) =>
+    getMediaDimensions(fileIds)
   )
   ipcMain.handle(IPC.ADD_ITEMS_TO_CANVAS, (_event, canvasId: number, items: CanvasItemInput[]) =>
     addItemsToCanvas(canvasId, items)

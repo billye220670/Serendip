@@ -1,7 +1,7 @@
 import { create } from 'zustand'
-import type { Canvas } from '../../../main/canvases'
+import type { Canvas, CanvasItemFullInput } from '../../../main/canvases'
 import { useCanvasItemsStore } from './canvasItems'
-import { computeWaterfallPositions } from '../lib/canvasMath'
+import { layoutJustifiedRows, findBlockPlacement, GRID_GAP } from '../lib/canvasMath'
 
 interface CanvasesState {
   canvases: Canvas[]
@@ -12,7 +12,7 @@ interface CanvasesState {
   rename: (id: number, newName: string) => Promise<void>
   remove: (id: number) => Promise<void>
   reorder: (orderedIds: number[]) => Promise<void>
-  /** 把 fileIds 加入画布，自动计算瀑布式布局位置，返回新 canvas_item id 列表 */
+  /** 把 fileIds 加入画布，自动排成等高行网格（不打乱已有元素），返回新 canvas_item id 列表 */
   addItems: (canvasId: number, fileIds: number[]) => Promise<number[]>
   removeItems: (canvasId: number, itemIds: number[]) => Promise<void>
 }
@@ -59,9 +59,33 @@ export const useCanvasesStore = create<CanvasesState>((set, get) => ({
     if (fileIds.length === 0) return []
     // 每次从 DB 拿最新元素，避免连续调用时因 bump() 异步而读到旧 state
     const existing = await window.api.getCanvasItems(canvasId)
-    const inputs = computeWaterfallPositions(fileIds, existing)
+    // 取新图真实宽高比（未知回退 4:3），按 fileIds 顺序排等高行网格
+    const dims = await window.api.getMediaDimensions(fileIds)
+    const dimMap = new Map(dims.map((d) => [d.id, d]))
+    const aspects = fileIds.map((id) => {
+      const d = dimMap.get(id)
+      return d?.width && d?.height && d.width > 0 && d.height > 0 ? d.width / d.height : 4 / 3
+    })
 
-    const newIds = await window.api.addItemsToCanvas(canvasId, inputs)
+    const { positions, blockW, blockH } = layoutJustifiedRows(aspects)
+    // 空画布居中原点；非空则在离现有内容最近的空白处放下整块（不动已有元素）
+    const anchor =
+      existing.length === 0 ? { x: 0, y: 0 } : findBlockPlacement(blockW, blockH, existing, GRID_GAP)
+    const maxZ = existing.length > 0 ? Math.max(...existing.map((it) => it.z)) : 0
+
+    // 用 Raw 写入：原样保存算好的 x/y/w/h，不让主进程按固定宽重算尺寸
+    const inputs: CanvasItemFullInput[] = positions.map((p, i) => ({
+      fileId: fileIds[i],
+      x: p.x - blockW / 2 + anchor.x,
+      y: p.y - blockH / 2 + anchor.y,
+      w: p.w,
+      h: p.h,
+      z: maxZ + i + 1,
+      rotation: 0,
+      clipPolygon: null
+    }))
+
+    const newIds = await window.api.addItemsToCanvasRaw(canvasId, inputs)
     if (newIds.length > 0) {
       set((s) => ({
         canvases: s.canvases.map((c) =>

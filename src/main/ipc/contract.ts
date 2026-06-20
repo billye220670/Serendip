@@ -56,6 +56,8 @@ export interface SerendipAPI {
   deleteCanvas(id: number): Promise<void>
   reorderCanvases(orderedIds: number[]): Promise<void>
   getCanvasItems(canvasId: number): Promise<CanvasItem[]>
+  /** 批量取媒体文件的真实宽高（画布自动网格布局按比例排版用） */
+  getMediaDimensions(fileIds: number[]): Promise<Array<{ id: number; width: number | null; height: number | null }>>
   addItemsToCanvas(canvasId: number, items: CanvasItemInput[]): Promise<number[]>
   addItemsToCanvasRaw(canvasId: number, items: CanvasItemFullInput[]): Promise<number[]>
   removeItemsFromCanvas(canvasId: number, itemIds: number[]): Promise<void>
@@ -113,6 +115,7 @@ export const IPC = {
   DELETE_CANVAS: 'serendip:deleteCanvas',
   REORDER_CANVASES: 'serendip:reorderCanvases',
   GET_CANVAS_ITEMS: 'serendip:getCanvasItems',
+  GET_MEDIA_DIMENSIONS: 'serendip:getMediaDimensions',
   ADD_ITEMS_TO_CANVAS: 'serendip:addItemsToCanvas',
   ADD_ITEMS_TO_CANVAS_RAW: 'serendip:addItemsToCanvasRaw',
   REMOVE_ITEMS_FROM_CANVAS: 'serendip:removeItemsFromCanvas',

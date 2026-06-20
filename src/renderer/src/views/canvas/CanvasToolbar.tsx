@@ -1,4 +1,4 @@
-import { Maximize2, PauseCircle, PlayCircle, Layers, Video } from 'lucide-react'
+import { Maximize2, PauseCircle, PlayCircle, Layers, Video, LayoutGrid } from 'lucide-react'
 import type { Viewport } from '../../lib/canvasMath'
 import { ZOOM_STEP } from '../../lib/canvasMath'
 import { useUIStore } from '../../stores/ui'
@@ -9,9 +9,10 @@ import { CameraShakeControls } from './CameraShakeControls'
 interface Props {
   viewport: Viewport
   onFit: () => void
+  onRearrange: () => void
 }
 
-export function CanvasToolbar({ viewport, onFit }: Props): React.JSX.Element {
+export function CanvasToolbar({ viewport, onFit, onRearrange }: Props): React.JSX.Element {
   const level = Math.round(Math.log(viewport.scale) / Math.log(ZOOM_STEP))
   const label = level === 0 ? '0' : level > 0 ? `+${level}` : `${level}`
   const freezeVideos = useUIStore((s) => s.canvasFreezeVideos)
@@ -32,6 +33,14 @@ export function CanvasToolbar({ viewport, onFit }: Props): React.JSX.Element {
           className="p-1.5 rounded-lg hover:bg-sidebar-hover text-muted-foreground hover:text-foreground transition-colors"
         >
           <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+      </Tooltip>
+      <Tooltip text="重排为网格" side="top">
+        <button
+          onClick={onRearrange}
+          className="p-1.5 rounded-lg hover:bg-sidebar-hover text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <LayoutGrid className="w-3.5 h-3.5" />
         </button>
       </Tooltip>
       <div className="w-px h-4 bg-border mx-0.5" />

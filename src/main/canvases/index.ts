@@ -303,3 +303,18 @@ export function getFileCanvasIds(fileId: number): number[] {
     .all(fileId) as Array<{ canvas_id: number }>
   return rows.map((r) => r.canvas_id)
 }
+
+/**
+ * 批量取媒体文件的真实宽高（用于画布自动网格布局按各自比例排版）。
+ * 未知宽高的文件返回 null，由调用方决定回退比例。
+ */
+export function getMediaDimensions(
+  fileIds: number[]
+): Array<{ id: number; width: number | null; height: number | null }> {
+  if (fileIds.length === 0) return []
+  const db = getDatabase()
+  const placeholders = fileIds.map(() => '?').join(',')
+  return db
+    .prepare(`SELECT id, width, height FROM media_files WHERE id IN (${placeholders})`)
+    .all(...fileIds) as Array<{ id: number; width: number | null; height: number | null }>
+}

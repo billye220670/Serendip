@@ -19,7 +19,8 @@ import {
   DEFAULT_VIEWPORT,
   ZOOM_STEP,
   screenToWorld,
-  aabbOfRotatedRect
+  aabbOfRotatedRect,
+  layoutJustifiedRows
 } from '../../lib/canvasMath'
 import { cropItem, scaleClipContent, parseClipData } from '../../lib/clipPolygon'
 import { navigateDirection, panToItem } from '../../lib/canvasNavigate'
@@ -341,6 +342,59 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       fitViewport(targetItems.length > 0 ? targetItems : items, width, height, 0.1)
     )
   }, [canvasId, items, selected, setViewport])
+
+  // 一键把画布上所有元素重排成等高行网格（可撤销）
+  const handleRearrangeAll = useCallback(() => {
+    const cur = useCanvasItemsStore.getState().items
+    if (cur.length === 0) return
+
+    // 旧变换快照（撤销用）
+    const before: CanvasItemPatch[] = cur.map((it) => ({
+      id: it.id,
+      x: it.x,
+      y: it.y,
+      w: it.w,
+      h: it.h,
+      rotation: it.rotation
+    }))
+
+    // 比例取当前 w/h，排等高行网格
+    const aspects = cur.map((it) => (it.h > 0 ? it.w / it.h : 1))
+    const { positions, blockW, blockH } = layoutJustifiedRows(aspects)
+
+    // 居中于现有内容质心，减少视口跳动
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const it of cur) {
+      const a = aabbOfRotatedRect(it.x, it.y, it.w, it.h, it.rotation)
+      if (a.minX < minX) minX = a.minX
+      if (a.minY < minY) minY = a.minY
+      if (a.maxX > maxX) maxX = a.maxX
+      if (a.maxY > maxY) maxY = a.maxY
+    }
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+
+    const after: CanvasItemPatch[] = positions.map((p, i) => ({
+      id: cur[i].id,
+      x: p.x - blockW / 2 + cx,
+      y: p.y - blockH / 2 + cy,
+      w: p.w,
+      h: p.h,
+      rotation: 0
+    }))
+
+    const apply = (): void => {
+      useCanvasItemsStore.getState().updateItems(after)
+      requestAnimationFrame(() => moveableRef.current?.updateRect())
+    }
+    const revert = (): void => {
+      useCanvasItemsStore.getState().updateItems(before)
+      requestAnimationFrame(() => moveableRef.current?.updateRect())
+    }
+    apply()
+    useCanvasUndoStore.getState().push({ apply, revert })
+    requestAnimationFrame(() => handleFit())
+  }, [handleFit])
 
   // 四角旋转提交：把累积旋转增量写入 store
   const handleRotateCommit = useCallback(
@@ -1640,7 +1694,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
       )}
 
       {/* 底部工具栏（含摄影机手摇开关 + 预设/设置） */}
-      <CanvasToolbar viewport={vp} onFit={handleFit} />
+      <CanvasToolbar viewport={vp} onFit={handleFit} onRearrange={handleRearrangeAll} />
     </div>
   )
 }

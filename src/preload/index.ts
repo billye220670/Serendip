@@ -58,6 +58,8 @@ const api: SerendipAPI = {
     ipcRenderer.invoke(IPC.REORDER_CANVASES, orderedIds),
   getCanvasItems: (canvasId: number) =>
     ipcRenderer.invoke(IPC.GET_CANVAS_ITEMS, canvasId),
+  getMediaDimensions: (fileIds: number[]) =>
+    ipcRenderer.invoke(IPC.GET_MEDIA_DIMENSIONS, fileIds),
   addItemsToCanvas: (canvasId: number, items: CanvasItemInput[]) =>
     ipcRenderer.invoke(IPC.ADD_ITEMS_TO_CANVAS, canvasId, items),
   addItemsToCanvasRaw: (canvasId: number, items: CanvasItemFullInput[]) =>
