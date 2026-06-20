@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Pause, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp, X } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Pause, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp, X, Video } from 'lucide-react'
 import clsx from 'clsx'
 import { clampScale, ZOOM_STEP } from '../lib/canvasMath'
 import { CURSOR_HAND_OPEN, CURSOR_HAND_GRAB } from '../lib/handCursor'
+import { useCameraShake } from '../hooks/useCameraShake'
+import { useCameraShakeStore } from '../stores/cameraShake'
+import { CameraShakeControls } from './canvas/CameraShakeControls'
 import { useDetailStore, BUFFER_SIZE, type SeqEntry } from '../stores/detail'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
@@ -1088,8 +1091,12 @@ interface LockViewportProps {
 
 function LockViewport({ item, isLight, closing, onRequestClose }: LockViewportProps): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement | null>(null)
+  const shakeLayerRef = useRef<HTMLDivElement | null>(null)
   const tRef = useRef({ tx: 0, ty: 0, s: 1 })
   const [t, setT] = useState<{ tx: number; ty: number; s: number }>({ tx: 0, ty: 0, s: 1 })
+
+  // 摄影机手摇：锁定模式是「视口」上下文，复用同一 hook + 同一份参数（只消费，不开面板）
+  useCameraShake(shakeLayerRef, { active: true })
 
   // 同步更新 ref + state，避免 render 阶段写 ref
   const updateT = useCallback((newT: { tx: number; ty: number; s: number }) => {
@@ -1246,28 +1253,35 @@ function LockViewport({ item, isLight, closing, onRequestClose }: LockViewportPr
     >
       {/* 进出脉冲 wrapper */}
       <div style={pulseStyle}>
-        {/* pan/zoom 变换层 */}
+        {/* 摄影机手摇层：transform 完全归 useCameraShake 所有（停用时为空） */}
         <div
-          className="w-full h-full"
-          style={{
-            transform: `translate(${t.tx}px, ${t.ty}px) scale(${t.s})`,
-            transformOrigin: '0 0',
-          }}
+          ref={shakeLayerRef}
+          className="camera-shake-layer w-full h-full"
+          style={{ transformOrigin: 'center', willChange: 'transform' }}
         >
-          {item.type === 'video' ? (
-            <video
-              ref={videoRef}
-              src={`serendip://video/${item.id}`}
-              autoPlay
-              muted
-              loop
-              playsInline
-              className="w-full h-full object-contain"
-              onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation() }}
-            />
-          ) : (
-            <LockImage item={item} />
-          )}
+          {/* pan/zoom 变换层 */}
+          <div
+            className="w-full h-full"
+            style={{
+              transform: `translate(${t.tx}px, ${t.ty}px) scale(${t.s})`,
+              transformOrigin: '0 0',
+            }}
+          >
+            {item.type === 'video' ? (
+              <video
+                ref={videoRef}
+                src={`serendip://video/${item.id}`}
+                autoPlay
+                muted
+                loop
+                playsInline
+                className="w-full h-full object-contain"
+                onDoubleClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+              />
+            ) : (
+              <LockImage item={item} />
+            )}
+          </div>
         </div>
       </div>
 
@@ -1283,6 +1297,9 @@ function LockViewport({ item, isLight, closing, onRequestClose }: LockViewportPr
       >
         <X className="w-6 h-6" />
       </button>
+
+      {/* 摄影机手摇浮条（鼠标近底部时显现；视频时上移让开进度条） */}
+      <LockShakeBar liftForScrubber={item.type === 'video'} />
 
       {/* 视频进度条 */}
       {item.type === 'video' && <VideoScrubber videoRef={videoRef} />}
@@ -1397,6 +1414,11 @@ function VideoScrubber({ videoRef }: VideoScrubberProps): React.JSX.Element {
 
   return (
     <div
+      onDoubleClick={(e) => {
+        // 锁定模式下双击进度条不应穿透触发退出
+        e.preventDefault()
+        e.stopPropagation()
+      }}
       className={clsx(
         'absolute bottom-0 left-0 right-0 z-40 px-4 pb-4 pt-3 flex items-center gap-3',
         'bg-glass backdrop-blur-xl transition-[opacity,pointer-events] duration-200',
@@ -1429,6 +1451,61 @@ function VideoScrubber({ videoRef }: VideoScrubberProps): React.JSX.Element {
   )
 }
 
+/**
+ * 锁定模式底部的摄影机手摇浮条 —— 复用画布同一套 CameraShakeControls。
+ * - 鼠标进入窗口底部阈值（与进度条同款 140px）才显现
+ * - 弹层（预设列表/参数面板）打开时强制保持可见
+ * - 视频时上移让开 VideoScrubber，避免 overlap
+ * - 浮条内双击不穿透（否则快速 toggle 会触发锁定模式的双击退出）
+ */
+function LockShakeBar({ liftForScrubber }: { liftForScrubber: boolean }): React.JSX.Element | null {
+  const enabled = useCameraShakeStore((s) => s.enabled)
+  const toggleEnabled = useCameraShakeStore((s) => s.toggleEnabled)
+  const [nearBottom, setNearBottom] = useState(false)
+  const [popoverOpen, setPopoverOpen] = useState(false)
+
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      setNearBottom(window.innerHeight - e.clientY < 140)
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  }, [])
+
+  const visible = nearBottom || popoverOpen
+
+  return (
+    <div
+      onDoubleClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+      className={clsx(
+        'absolute left-1/2 -translate-x-1/2 z-50 flex items-center gap-0.5 rounded-xl border border-border bg-glass backdrop-blur-xl px-2.5 py-1.5 shadow-lg select-none',
+        'transition-[opacity,pointer-events] duration-200',
+        // 视频时抬高到进度条上方（进度条约 56px 高），图片时贴近底部
+        liftForScrubber ? 'bottom-[84px]' : 'bottom-4',
+        visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+      )}
+    >
+      {/* 摄影机总开关（高亮为主题色） */}
+      <Tooltip text={enabled ? '关闭摄影机手摇' : '开启摄影机手摇'} side="top">
+        <button
+          onClick={toggleEnabled}
+          className={clsx(
+            'p-1.5 rounded-lg transition-colors',
+            enabled
+              ? 'text-primary hover:bg-sidebar-hover'
+              : 'text-muted-foreground hover:bg-sidebar-hover hover:text-foreground'
+          )}
+        >
+          <Video className="w-3.5 h-3.5" />
+        </button>
+      </Tooltip>
+      <CameraShakeControls disabled={!enabled} onPopoverChange={setPopoverOpen} />
+    </div>
+  )
+}
 
 /**
  * 面包屑组件：显示当前图从 rootPath 起的各级目录，可点击收窄/扩大抽样范围。

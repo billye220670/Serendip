@@ -10,6 +10,8 @@ import { useCanvasViewportStore, flushViewportNow } from '../../stores/canvasVie
 import { useCanvasSelectionStore } from '../../stores/canvasSelection'
 import { useCanvasUndoStore } from '../../stores/canvasUndo'
 import { useUIStore } from '../../stores/ui'
+import { useCameraShakeStore } from '../../stores/cameraShake'
+import { useCameraShake } from '../../hooks/useCameraShake'
 import {
   fitViewport,
   clampScale,
@@ -49,6 +51,7 @@ interface Props {
 export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [containerEl, setContainerEl] = useState<HTMLDivElement | null>(null)
+  const shakeLayerRef = useRef<HTMLDivElement | null>(null)
   const [isResizing, setIsResizing] = useState(false)
   // 裁剪拖拽进行中的屏幕框坐标（用于显示虚线矩形）
   const [cropDragRect, setCropDragRect] = useState<{
@@ -266,6 +269,12 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
   const selectionToggle = useCanvasSelectionStore((s) => s.toggle)
   const selectionClear = useCanvasSelectionStore((s) => s.clear)
 
+  // 摄影机手摇：画布永远是「可被手摇」的上下文。
+  useCameraShake(shakeLayerRef, { active: true })
+  const shakeEnabled = useCameraShakeStore((s) => s.enabled)
+  // 手摇开启 → 锁定编辑：清选区、吞掉选择/拖拽手势（关掉摄影机即可恢复编辑）
+  const shakeEditLocked = shakeEnabled
+
   // 选中元素的 DOM 节点列表（渲染时查询，保证 Moveable target 是最新的）
   const selectedElements = Array.from(selected)
     .map((itemId) => document.querySelector<HTMLElement>(`[data-canvas-item-id="${itemId}"]`))
@@ -311,6 +320,11 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
     setViewport(canvasId, fitViewport(items, width, height, 0.1))
     didAutoFitRef.current = true
   }, [canvasId, items, setViewport])
+
+  // 手摇运行中清空选区（隐藏 Moveable 手柄、锁定编辑）
+  useEffect(() => {
+    if (shakeEditLocked) selectionClear()
+  }, [shakeEditLocked, selectionClear])
 
   // F 聚焦
   const handleFit = useCallback(() => {
@@ -868,22 +882,30 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
         selectionClear()
       }}
     >
-      {/* 画布元素（onClick stopPropagation，不会冒泡到容器的清空 handler） */}
-      {items.map((item, i) => (
-        <CanvasItemNode
-          key={item.id}
-          item={item}
-          viewport={vp}
-          index={i}
-          selected={selected.has(item.id)}
-          containerRef={containerRef}
-          onPointerDown={(e) => {
-            // Space 平移 / 非左键 / 修饰键 → 不干涉（onClick 处理修饰键）
-            if (
-              spaceHeldRef.current ||
-              cKeyHeldRef.current ||
-              e.button !== 0 ||
-              e.ctrlKey ||
+      {/* 摄影机手摇层：transform 完全归 useCameraShake 所有（停用时为空） */}
+      <div
+        ref={shakeLayerRef}
+        className="camera-shake-layer"
+        style={{ position: 'absolute', inset: 0, transformOrigin: 'center', willChange: 'transform' }}
+      >
+        {/* 画布元素（onClick stopPropagation，不会冒泡到容器的清空 handler） */}
+        {items.map((item, i) => (
+          <CanvasItemNode
+            key={item.id}
+            item={item}
+            viewport={vp}
+            index={i}
+            selected={selected.has(item.id)}
+            containerRef={containerRef}
+            onPointerDown={(e) => {
+              // 手摇运行中 → 锁定编辑，不响应拖拽/单选
+              if (shakeEditLocked) return
+              // Space 平移 / 非左键 / 修饰键 → 不干涉（onClick 处理修饰键）
+              if (
+                spaceHeldRef.current ||
+                cKeyHeldRef.current ||
+                e.button !== 0 ||
+                e.ctrlKey ||
               e.metaKey ||
               e.shiftKey
             )
@@ -949,6 +971,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           }}
         />
       ))}
+      </div>
 
       {/* 空态 */}
       {!loading && items.length === 0 && (
@@ -1378,6 +1401,11 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
           onDragStart={(e) => {
             const inputEvent = e.inputEvent as PointerEvent
             const target = inputEvent.target as HTMLElement | null
+            // 手摇运行中 → 锁定编辑，不框选
+            if (shakeEditLocked) {
+              e.stop()
+              return
+            }
             // Space 平移中 → 不框选（pan handler 处理）
             if (spaceHeldRef.current || inputEvent.button !== 0) {
               e.stop()
@@ -1457,7 +1485,7 @@ export function CanvasView({ canvasId }: Props): React.JSX.Element {
         />
       )}
 
-      {/* 底部工具栏 */}
+      {/* 底部工具栏（含摄影机手摇开关 + 预设/设置） */}
       <CanvasToolbar viewport={vp} onFit={handleFit} />
     </div>
   )
