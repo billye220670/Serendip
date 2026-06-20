@@ -39,6 +39,8 @@ interface DetailState {
   _jumpOnAppend: boolean
 
   open: (item: MediaItem) => void
+  /** 在详情页内接力到指定图：保留历史、接到末尾、切到该图的目录范围 */
+  relayTo: (item: MediaItem) => void
   close: () => void
   next: () => void
   prev: () => void
@@ -102,6 +104,27 @@ export const useDetailStore = create<DetailState>((set, get) => ({
       sequence: [wrap(item)],
       cursor: 0,
       maxCursor: 0,
+      scopePath: item.folder_path,
+      scopeLocked: true,
+      fetching: false,
+      _jumpOnAppend: false,
+    })
+    void triggerPrefetch()
+  },
+
+  relayTo: (item) => {
+    const state = get()
+    // 接力到推荐图：保留已访问历史（0..maxCursor），丢弃旧 scope 未看的预取项，
+    // 把目标图接到历史末尾并把游标落到它 —— 与 open 的「整段重置」不同，这样回滚仍能
+    // 滚到接力前的历史，缩略图条上更早的项也仍可点击（key 都还在 sequence 里）。
+    const kept = state.sequence.slice(0, state.maxCursor + 1)
+    const wrapped = wrap(item)
+    const newSeq = [...kept, wrapped]
+    const newIndex = newSeq.length - 1
+    set({
+      sequence: newSeq,
+      cursor: newIndex,
+      maxCursor: newIndex,
       scopePath: item.folder_path,
       scopeLocked: true,
       fetching: false,

@@ -836,7 +836,7 @@ function RecommendationsPanel({
   const isLight = theme === 'light'
   const items = usePanelRecommendationsStore((s) => s.items)
   const loadMore = usePanelRecommendationsStore((s) => s.loadMore)
-  const detailOpen = useDetailStore((s) => s.open)
+  const detailRelayTo = useDetailStore((s) => s.relayTo)
   const categories = useCategoriesStore((s) => s.categories)
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const loadStats = useLibraryStore((s) => s.loadStats)
@@ -948,7 +948,7 @@ function RecommendationsPanel({
               <RecommendationItem
                 key={item.id}
                 item={item}
-                onOpen={() => detailOpen(item)}
+                onOpen={() => detailRelayTo(item)}
                 onLikeToggle={() => void handleLikeToggle(item)}
                 onContextMenu={(e) => handleContextMenu(e, item)}
               />
