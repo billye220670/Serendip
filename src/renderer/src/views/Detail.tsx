@@ -8,6 +8,7 @@ import { useCameraShake } from '../hooks/useCameraShake'
 import { useCameraShakeStore } from '../stores/cameraShake'
 import { CameraShakeControls } from './canvas/CameraShakeControls'
 import { useDetailStore, type Cell } from '../stores/detail'
+import { useLockSessionStore, snapshotShake, applyShakeSnapshot } from '../stores/lockSession'
 import { useLibraryStore } from '../stores/library'
 import { useUIStore } from '../stores/ui'
 import { usePanelRecommendationsStore } from '../stores/panelRecommendations'
@@ -38,6 +39,7 @@ export function DetailView(): React.JSX.Element | null {
   const prev = useDetailStore((s) => s.prev)
   const jumpTo = useDetailStore((s) => s.jumpTo)
   const togglePin = useDetailStore((s) => s.togglePin)
+  const cyclePinned = useLockSessionStore((s) => s.cyclePinned)
   const rootPath = useLibraryStore((s) => s.rootPath)
   const panelOpen = useUIStore((s) => s.detailPanelOpen)
   const togglePanel = useUIStore((s) => s.toggleDetailPanel)
@@ -293,8 +295,12 @@ export function DetailView(): React.JSX.Element | null {
         close()
         return
       }
-      // 锁定态：吞掉所有其余按键，由 LockViewport 内部处理空格/F
-      if (lockState !== 'off') return
+      // 锁定态：←/→ 在已锁定缩略图间循环切图，其余键交给 LockViewport（空格/F）
+      if (lockState !== 'off') {
+        if (e.key === 'ArrowRight') { e.preventDefault(); cyclePinned(1); return }
+        if (e.key === 'ArrowLeft') { e.preventDefault(); cyclePinned(-1); return }
+        return
+      }
       if (searchOpen) return
       if (e.key === 'Tab') { e.preventDefault(); togglePanel(); return }
       if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); next() }
@@ -302,7 +308,36 @@ export function DetailView(): React.JSX.Element | null {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isOpen, lockState, searchOpen, close, next, prev, togglePanel])
+  }, [isOpen, lockState, searchOpen, close, next, prev, togglePanel, cyclePinned])
+
+  // 进出沉浸锁定会话：off→非off 开会话（带入当前锁定格顺序），非off→off 结束（还原全局手摇）
+  useEffect(() => {
+    if (lockState !== 'off') {
+      const pinnedKeys = cells.filter((c) => c.pinned).map((c) => c.key)
+      useLockSessionStore.getState().begin(pinnedKeys)
+      return () => useLockSessionStore.getState().end()
+    }
+    return undefined
+    // 仅按「是否在锁定态」起停，会话内 cells 变化由 LockPinnedRail 的 reconcile 兜底
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockState !== 'off'])
+
+  // 自动播放：锁定态 + autoplay + 多于 1 张锁定图时，按 3s ± 35% 递归定时切下一张
+  const autoplay = useLockSessionStore((s) => s.autoplay)
+  const orderLen = useLockSessionStore((s) => s.order.length)
+  useEffect(() => {
+    if (lockState === 'off' || !autoplay || orderLen <= 1) return
+    let timer: ReturnType<typeof setTimeout>
+    const schedule = (): void => {
+      const interval = 3000 + (Math.random() * 2 - 1) * 3000 * 0.35
+      timer = setTimeout(() => {
+        useLockSessionStore.getState().cyclePinned(1)
+        schedule()
+      }, interval)
+    }
+    schedule()
+    return () => clearTimeout(timer)
+  }, [lockState, autoplay, orderLen])
 
   if (!isOpen && !visible) return null
   if (!currentItem) return null
@@ -516,6 +551,7 @@ export function DetailView(): React.JSX.Element | null {
         {lockState !== 'off' && (
           <LockViewport
             item={currentItem}
+            cellKey={cells[cursor]?.key ?? -1}
             isLight={isLight}
             closing={lockState === 'closing'}
             onRequestClose={() => {
@@ -524,6 +560,10 @@ export function DetailView(): React.JSX.Element | null {
             }}
           />
         )}
+
+        {/* 锁定模式 · 左下角锁定缩略图轨道（盲操切图）—— LockViewport 的兄弟节点，
+            滚轮不在 viewportRef 子树内 → 天然不触发缩放 */}
+        {lockState !== 'off' && <LockPinnedRail isLight={isLight} />}
       </div>
 
       {/* 右侧推荐面板（d）— 挤压布局：宽度受 open 切换 0/PANEL_WIDTH，width 动画收展 */}
@@ -1094,12 +1134,13 @@ function formatDuration(ms: number): string {
 
 interface LockViewportProps {
   item: MediaItem
+  cellKey: number
   isLight: boolean
   closing: boolean
   onRequestClose: () => void
 }
 
-function LockViewport({ item, isLight, closing, onRequestClose }: LockViewportProps): React.JSX.Element {
+function LockViewport({ item, cellKey, isLight, closing, onRequestClose }: LockViewportProps): React.JSX.Element {
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const shakeLayerRef = useRef<HTMLDivElement | null>(null)
   const tRef = useRef({ tx: 0, ty: 0, s: 1 })
@@ -1113,6 +1154,20 @@ function LockViewport({ item, isLight, closing, onRequestClose }: LockViewportPr
     tRef.current = newT
     setT(newT)
   }, [])
+
+  // 盲操切图（轨道滚轮/←→/点击/自动播放切换 cellKey）：存上一张的 panzoom+手摇、取这一张的记忆。
+  // 无记录 → panzoom 复位 fit、手摇保持当前（忽略）。
+  const prevKeyRef = useRef(cellKey)
+  useEffect(() => {
+    const prev = prevKeyRef.current
+    if (prev === cellKey) return
+    const ls = useLockSessionStore.getState()
+    ls.saveSnapshot(prev, { pan: { ...tRef.current }, shake: snapshotShake() })
+    const snap = ls.snapshots[cellKey]
+    updateT(snap?.pan ?? { tx: 0, ty: 0, s: 1 })
+    if (snap?.shake) applyShakeSnapshot(snap.shake)
+    prevKeyRef.current = cellKey
+  }, [cellKey, updateT])
 
   // 进出脉冲动效
   const [mounted, setMounted] = useState(false)
@@ -1317,6 +1372,220 @@ function LockViewport({ item, isLight, closing, onRequestClose }: LockViewportPr
   )
 }
 
+/**
+ * 锁定模式 · 左下角锁定缩略图轨道。
+ * - 随左下角热区渐显渐隐（仿底部浮条）；隐藏时改显圆点导航（当前点主题色高亮），便于键盘盲操看反馈。
+ * - 顺序取自 lockSession.order（会话内可拖拽重排，不影响外部底部缩略图条）。
+ * - 滚轮在热区循环切换并阻止穿透；点击切到该图；长按拖拽重排。键盘 ←/→ 由 DetailView 统一处理。
+ * - 未锁定任何缩略图时不渲染。
+ */
+const RAIL_THUMB = 52
+const RAIL_GAP = 8
+
+function LockPinnedRail({ isLight }: { isLight: boolean }): React.JSX.Element | null {
+  const cells = useDetailStore((s) => s.cells)
+  const cursor = useDetailStore((s) => s.cursor)
+  const order = useLockSessionStore((s) => s.order)
+  const cyclePinned = useLockSessionStore((s) => s.cyclePinned)
+  const goToKey = useLockSessionStore((s) => s.goToKey)
+  const reorder = useLockSessionStore((s) => s.reorder)
+  const reconcile = useLockSessionStore((s) => s.reconcile)
+
+  const hotRef = useRef<HTMLDivElement | null>(null)
+  const rowRef = useRef<HTMLDivElement | null>(null)
+  const lastFlipRef = useRef(0)
+
+  // 锁定格变化时同步会话顺序（保持已排顺序、追加新锁定格）
+  useEffect(() => {
+    const pinnedKeys = cells.filter((c) => c.pinned).map((c) => c.key)
+    reconcile(pinnedKeys)
+  }, [cells, reconcile])
+
+  // 渐显渐隐：左下角热区（比缩略图本体大，便于盲操）
+  const [hovered, setHovered] = useState(false)
+  useEffect(() => {
+    const onMove = (e: PointerEvent): void => {
+      setHovered(e.clientX < 440 && window.innerHeight - e.clientY < 240)
+    }
+    window.addEventListener('pointermove', onMove)
+    return () => window.removeEventListener('pointermove', onMove)
+  }, [])
+
+  // 滚轮循环切图 + 阻止穿透（兄弟节点，不触发 viewportRef 缩放）
+  useEffect(() => {
+    const el = hotRef.current
+    if (!el) return
+    const WHEEL_COOLDOWN = 80
+    const WHEEL_DEADZONE = 2
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (Math.abs(e.deltaY) < WHEEL_DEADZONE) return
+      const now = e.timeStamp
+      if (now - lastFlipRef.current < WHEEL_COOLDOWN) return
+      lastFlipRef.current = now
+      cyclePinned(e.deltaY > 0 ? 1 : -1)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+    // order.length 入依赖：首挂时 order 可能为空（begin 在父 effect 后才填充）→ 元素尚未渲染，
+    // 待 order 变非空、hotRef 元素出现时重跑本 effect 才能真正绑上监听
+  }, [cyclePinned, order.length])
+
+  // 长按拖拽重排
+  const dragRef = useRef<{ id: number; startX: number; rowLeft: number; dragging: boolean; moved: boolean } | null>(null)
+  const lpTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const suppressClick = useRef(false)
+  const [draggingKey, setDraggingKey] = useState<number | null>(null)
+  const [dragLeft, setDragLeft] = useState(0)
+
+  const onPointerDown = (e: React.PointerEvent, key: number): void => {
+    if (e.button !== 0) return
+    suppressClick.current = false
+    const rowLeft = rowRef.current?.getBoundingClientRect().left ?? 0
+    dragRef.current = { id: e.pointerId, startX: e.clientX, rowLeft, dragging: false, moved: false }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+    lpTimer.current = setTimeout(() => {
+      if (!dragRef.current) return
+      dragRef.current.dragging = true
+      setDraggingKey(key)
+      setDragLeft(order.indexOf(key) * (RAIL_THUMB + RAIL_GAP))
+    }, 300)
+  }
+  const onPointerMove = (e: React.PointerEvent, key: number): void => {
+    const d = dragRef.current
+    if (!d) return
+    const dx = e.clientX - d.startX
+    if (!d.dragging) {
+      if (Math.abs(dx) > 8) {
+        if (lpTimer.current) clearTimeout(lpTimer.current)
+        suppressClick.current = true // 长按前已移动：视为滚动/滑动手势，吞掉随后的 click
+        dragRef.current = null
+      }
+      return
+    }
+    d.moved = true
+    const rowW = order.length * (RAIL_THUMB + RAIL_GAP) - RAIL_GAP
+    const left = Math.max(0, Math.min(e.clientX - d.rowLeft - RAIL_THUMB / 2, rowW - RAIL_THUMB))
+    setDragLeft(left)
+    let targetIdx = Math.round((e.clientX - d.rowLeft - RAIL_THUMB / 2) / (RAIL_THUMB + RAIL_GAP))
+    targetIdx = Math.max(0, Math.min(targetIdx, order.length - 1))
+    const curIdx = order.indexOf(key)
+    if (targetIdx !== curIdx) reorder(key, order[targetIdx])
+  }
+  const endDrag = (): void => {
+    const d = dragRef.current
+    if (lpTimer.current) clearTimeout(lpTimer.current)
+    if (d?.dragging && d.moved) suppressClick.current = true
+    dragRef.current = null
+    setDraggingKey(null)
+  }
+  const onClick = (key: number): void => {
+    if (suppressClick.current) {
+      suppressClick.current = false
+      return
+    }
+    goToKey(key)
+  }
+
+  if (order.length === 0) return null
+
+  const shown = hovered || draggingKey !== null
+  const rowW = order.length * (RAIL_THUMB + RAIL_GAP) - RAIL_GAP
+  const currentKey = cells[cursor]?.key
+
+  return (
+    <div
+      ref={hotRef}
+      className="absolute bottom-0 left-0 z-40 pointer-events-auto"
+      style={{ width: 440, height: 240 }}
+    >
+      <div className="absolute left-4 bottom-4">
+        {/* 缩略图层（绝对定位按槽位排，便于拖拽重排动画） */}
+        <div
+          ref={rowRef}
+          className="relative transition-opacity duration-200"
+          style={{
+            width: rowW,
+            height: RAIL_THUMB,
+            opacity: shown ? 1 : 0,
+            pointerEvents: shown ? 'auto' : 'none'
+          }}
+        >
+          {order.map((key) => {
+            const cell = cells.find((c) => c.key === key)
+            if (!cell) return null
+            const idx = order.indexOf(key)
+            const isCurrent = key === currentKey
+            const isDragged = draggingKey === key
+            return (
+              <button
+                key={key}
+                onPointerDown={(e) => onPointerDown(e, key)}
+                onPointerMove={(e) => onPointerMove(e, key)}
+                onPointerUp={endDrag}
+                onPointerCancel={endDrag}
+                onClick={() => onClick(key)}
+                className={clsx(
+                  'absolute bottom-0 h-[52px] w-[52px] rounded overflow-hidden focus:outline-none select-none',
+                  isCurrent && 'ring-2 ring-primary'
+                )}
+                style={{
+                  left: isDragged ? dragLeft : idx * (RAIL_THUMB + RAIL_GAP),
+                  transition: isDragged ? 'none' : 'left 180ms ease',
+                  zIndex: isDragged ? 10 : 1,
+                  transform: isDragged ? 'scale(1.06)' : 'none',
+                  cursor: isDragged ? 'grabbing' : 'pointer'
+                }}
+              >
+                <img
+                  src={`serendip://thumb/${cell.item.id}`}
+                  alt=""
+                  className="w-full h-full object-cover pointer-events-none"
+                  draggable={false}
+                />
+                <div
+                  className={clsx(
+                    'absolute inset-0 transition-colors duration-200 pointer-events-none',
+                    isCurrent
+                      ? 'bg-transparent'
+                      : isLight
+                        ? 'bg-black/35 hover:bg-black/15'
+                        : 'bg-black/50 hover:bg-black/25'
+                  )}
+                />
+                <div className="absolute top-0.5 right-0.5 grid place-items-center w-4 h-4 rounded-full bg-black/60 backdrop-blur pointer-events-none">
+                  <Lock className="w-2.5 h-2.5 text-white" />
+                </div>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* 圆点导航层（隐藏态显示；display-only） */}
+        <div
+          className="absolute left-0 bottom-0 flex items-center gap-1.5 transition-opacity duration-200 pointer-events-none"
+          style={{ height: 10, opacity: shown ? 0 : 1 }}
+        >
+          {order.map((key) => {
+            const isCurrent = key === currentKey
+            return (
+              <span
+                key={key}
+                className={clsx(
+                  'rounded-full transition-colors',
+                  isCurrent ? 'bg-primary' : isLight ? 'bg-black/30' : 'bg-white/40'
+                )}
+                style={{ width: isCurrent ? 8 : 7, height: isCurrent ? 8 : 7 }}
+              />
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function LockImage({ item }: { item: MediaItem }): React.JSX.Element {
   const [fullLoaded, setFullLoaded] = useState(false)
   const [error, setError] = useState(false)
@@ -1471,6 +1740,9 @@ function VideoScrubber({ videoRef }: VideoScrubberProps): React.JSX.Element {
 function LockShakeBar({ liftForScrubber }: { liftForScrubber: boolean }): React.JSX.Element | null {
   const enabled = useCameraShakeStore((s) => s.enabled)
   const toggleEnabled = useCameraShakeStore((s) => s.toggleEnabled)
+  const autoplay = useLockSessionStore((s) => s.autoplay)
+  const toggleAutoplay = useLockSessionStore((s) => s.toggleAutoplay)
+  const canAutoplay = useLockSessionStore((s) => s.order.length > 1)
   const [nearBottom, setNearBottom] = useState(false)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
@@ -1498,6 +1770,26 @@ function LockShakeBar({ liftForScrubber }: { liftForScrubber: boolean }): React.
         visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
       )}
     >
+      {/* 自动播放（≥2 张锁定图时出现）：激活后按 ~3s±随机 顺序循环切下一张 */}
+      {canAutoplay && (
+        <>
+          <Tooltip text={autoplay ? '停止自动播放' : '自动播放锁定图'} side="top">
+            <button
+              onClick={toggleAutoplay}
+              className={clsx(
+                'p-1.5 rounded-lg transition-colors',
+                autoplay
+                  ? 'text-primary hover:bg-sidebar-hover'
+                  : 'text-muted-foreground hover:bg-sidebar-hover hover:text-foreground'
+              )}
+            >
+              <Play className="w-3.5 h-3.5" />
+            </button>
+          </Tooltip>
+          <div className="w-px h-4 bg-border mx-0.5" />
+        </>
+      )}
+
       {/* 摄影机总开关（高亮为主题色） */}
       <Tooltip text={enabled ? '关闭摄影机手摇' : '开启摄影机手摇'} side="top">
         <button
