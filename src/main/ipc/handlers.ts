@@ -36,6 +36,7 @@ import {
   type CanvasItemPatch
 } from '../canvases'
 import { startWatcher } from '../watcher'
+import { pushImages } from '../plugins/p2v'
 
 export function registerIpcHandlers(): void {
   // 选择根目录
@@ -247,6 +248,11 @@ export function registerIpcHandlers(): void {
   )
   ipcMain.handle(IPC.GET_FILE_CANVAS_IDS, (_event, fileId: number) =>
     getFileCanvasIds(fileId)
+  )
+
+  // ===== 插件：P2V（pix2real 图片推送） =====
+  ipcMain.handle(IPC.PLUGIN_P2V_PUSH, (_event, fileIds: number[], workflowId: number, port?: number) =>
+    pushImages(fileIds, workflowId, port)
   )
 
   // ===== 窗口装饰 =====

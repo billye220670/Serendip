@@ -23,6 +23,7 @@ import { useCategoriesStore } from './stores/categories'
 import { useCanvasesStore } from './stores/canvases'
 import { useCurrentCanvasStore } from './stores/currentCanvas'
 import { useSelectionStore } from './stores/selection'
+import { usePluginsStore, useP2VEnabled, useP2VPort } from './stores/plugins'
 import { ExploreView } from './views/Explore'
 import { CategoryView } from './views/CategoryView'
 import { ReviewView } from './views/Review'
@@ -57,7 +58,8 @@ import {
   Trash2,
   Presentation,
   Search,
-  Folder
+  Folder,
+  Blocks
 } from 'lucide-react'
 import clsx from 'clsx'
 import type { Category } from '../../main/categories'
@@ -228,10 +230,21 @@ function App(): React.JSX.Element {
     })
   }, [loadCurrentRoot, loadCategories, loadCanvases])
 
+  const pickingRootRef = useRef(false)
+  const [pickingRoot, setPickingRoot] = useState(false)
   const handleSelectRoot = async (): Promise<void> => {
-    const path = await window.api.selectRootDirectory()
-    if (path) {
-      await startScan(path)
+    // 防止连点弹出多个目录选择窗口（两个入口按钮都走这里）
+    if (pickingRootRef.current) return
+    pickingRootRef.current = true
+    setPickingRoot(true) // 显示全屏遮罩，阻断交互直到原生选择窗口关闭
+    try {
+      const path = await window.api.selectRootDirectory()
+      if (path) {
+        await startScan(path)
+      }
+    } finally {
+      pickingRootRef.current = false
+      setPickingRoot(false)
     }
   }
 
@@ -581,6 +594,7 @@ function App(): React.JSX.Element {
             style={NOT_DRAGGABLE}
           >
             <CurrentCanvasChip />
+            <PluginButton />
             <div className="ml-2 mr-4">
               <SettingsPopover
                 showExploreMode={view.kind === 'explore'}
@@ -749,7 +763,7 @@ function App(): React.JSX.Element {
             {/* 其他视图：条件渲染，各自独立滚动 */}
             {(view.kind !== 'explore' || !rootPath || isScanning) && (
               <OtherViewScrollContainer>
-                <div className={view.kind === 'review' ? 'h-full' : view.kind === 'canvas' ? 'h-full' : 'min-h-full'}>
+                <div className={view.kind === 'review' ? 'h-full' : view.kind === 'canvas' ? 'h-full' : !rootPath || isScanning ? 'h-full' : 'min-h-full'}>
                   {isScanning ? (
                     <ScanProgressPanel progress={scanProgress} />
                   ) : !rootPath ? (
@@ -884,6 +898,10 @@ function App(): React.JSX.Element {
       )}
       {/* 详情页沉浸 overlay — fixed inset-0 z-50，底层瀑布流不销毁 */}
       <DetailView />
+      {/* 目录选择期间：全屏遮罩，变暗并阻断一切交互，直到原生窗口关闭/确认 */}
+      {pickingRoot && (
+        <div className="fixed inset-0 z-[400] bg-black/40 cursor-wait" />
+      )}
     </DndContext>
   )
 }
@@ -1008,6 +1026,115 @@ function SettingsPopover({
                 {theme === 'light' ? '亮色' : '暗色'}
               </button>
             </div>
+          </div>,
+          document.body
+        )}
+    </>
+  )
+}
+
+/**
+ * 顶栏右上角的插件管理面板：目前收纳 pix2real（P2V Bridge）桥接插件的启用开关。
+ *
+ * 触发器是一个 Blocks 图标按钮；点击切换面板。
+ * 面板锚定在按钮下方右侧，固定定位（避开顶栏边界），点击外部 / Escape / 窗口移动时关闭。
+ * 开关状态由 usePluginsStore 管理并持久化到 localStorage（key: serendip-plugins）。
+ */
+function PluginButton(): React.JSX.Element {
+  const p2vEnabled = useP2VEnabled()
+  const p2vPort = useP2VPort()
+  const setP2VPort = usePluginsStore((s) => s.setP2VPort)
+  const setPluginEnabled = usePluginsStore((s) => s.setPluginEnabled)
+  const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const [anchor, setAnchor] = useState<{ top: number; right: number } | null>(null)
+
+  // 打开时计算面板位置（锚到按钮下方，靠右对齐）
+  useEffect(() => {
+    if (!open) return
+    const r = btnRef.current?.getBoundingClientRect()
+    if (r) setAnchor({ top: r.bottom + 6, right: window.innerWidth - r.right })
+
+    // 点外关闭（含标题栏拖拽区域）
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (panelRef.current?.contains(t)) return
+      if (btnRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    const onWindowMove = (): void => setOpen(false)
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    window.electron.ipcRenderer.on(IPC.WINDOW_MOVE, onWindowMove)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+      window.electron.ipcRenderer.removeListener(IPC.WINDOW_MOVE, onWindowMove)
+    }
+  }, [open])
+
+  return (
+    <>
+      <Tooltip text="插件" side="bottom">
+        <button
+          ref={btnRef}
+          onClick={() => setOpen((v) => !v)}
+          className={clsx(
+            'p-2 rounded-lg transition-colors',
+            open
+              ? 'bg-sidebar-hover text-foreground'
+              : 'hover:bg-sidebar-hover text-muted-foreground hover:text-foreground'
+          )}
+          aria-expanded={open}
+        >
+          <Blocks className="w-4 h-4" />
+        </button>
+      </Tooltip>
+      {open &&
+        anchor &&
+        createPortal(
+          <div
+            ref={panelRef}
+            className="fixed z-[150] rounded-xl border border-border bg-sidebar shadow-lg shadow-black/20 p-4 flex flex-col gap-3"
+            style={{ top: anchor.top, right: anchor.right }}
+          >
+            <span className="text-xs font-medium text-foreground">插件</span>
+            <div className="flex items-center gap-4">
+              <span className="text-xs text-muted-foreground flex-1">P2V Bridge</span>
+              <button
+                onClick={() => setPluginEnabled('p2vBridge', !p2vEnabled)}
+                role="switch"
+                aria-checked={p2vEnabled}
+                className={clsx(
+                  'relative w-9 h-5 rounded-full transition-colors flex-shrink-0',
+                  p2vEnabled ? 'bg-primary' : 'bg-muted'
+                )}
+              >
+                <span
+                  className={clsx(
+                    'absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform',
+                    p2vEnabled && 'translate-x-4'
+                  )}
+                />
+              </button>
+            </div>
+            {p2vEnabled && (
+              <div className="flex items-center gap-4">
+                <span className="text-xs text-muted-foreground flex-1">端口</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={p2vPort}
+                  onChange={(e) => setP2VPort(Number(e.target.value) || 3000)}
+                  className="w-16 text-xs bg-background border border-border rounded px-2 py-0.5 text-foreground outline-none focus:border-primary"
+                />
+              </div>
+            )}
           </div>,
           document.body
         )}
@@ -1273,7 +1400,7 @@ function EmptyState({ onSelect }: { onSelect: () => void }): React.JSX.Element {
           onClick={onSelect}
           className="px-6 py-2.5 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors text-sm font-medium"
         >
-          选择根目录
+          打开目录
         </button>
       </div>
     </div>

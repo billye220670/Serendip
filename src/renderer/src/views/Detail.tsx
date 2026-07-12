@@ -19,6 +19,7 @@ import { CategorySearchPanel } from '../components/CategorySearchPanel'
 import { CanvasPicker } from '../components/CanvasPicker'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { pushCanvasToast } from '../components/Toast'
+import { useP2VMenu } from '../hooks/useP2VMenu'
 import { Tooltip } from '../components/Tooltip'
 import { IPC } from '../../../main/ipc/contract'
 import type { MediaItem } from '../../../main/recommender'
@@ -893,6 +894,7 @@ function RecommendationsPanel({
   const addItemsToCategory = useCategoriesStore((s) => s.addItems)
   const loadStats = useLibraryStore((s) => s.loadStats)
   const [menu, setMenu] = useState<PanelMenu | null>(null)
+  const { buildP2VItems, p2vPickerNode, closeP2VPicker } = useP2VMenu()
 
   const { ref: bottomRef, inView: bottomInView } = useInView({ rootMargin: '200px' })
   useEffect(() => {
@@ -943,6 +945,7 @@ function RecommendationsPanel({
 
   const menuItems: ContextMenuItem[] = menu
     ? [
+        ...buildP2VItems(menu.item),
         {
           key: 'like',
           label: menu.item.liked ? '取消喜欢' : '喜欢',
@@ -1014,9 +1017,11 @@ function RecommendationsPanel({
           x={menu.x}
           y={menu.y}
           items={menuItems}
-          onClose={() => setMenu(null)}
+          onClose={() => { setMenu(null); closeP2VPicker() }}
+          onSubmenuClose={closeP2VPicker}
         />
       )}
+      {p2vPickerNode}
     </aside>
   )
 }

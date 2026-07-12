@@ -69,6 +69,14 @@ export interface SerendipAPI {
   // ===== 进度订阅 =====
   onScanProgress(callback: (progress: ScanProgress) => void): () => void
 
+  // ===== 插件：P2V（pix2real 图片推送） =====
+  /** 将选中文件推送到 pix2real 指定工作流 Tab。返回成功/失败计数；连接失败时带 error */
+  pluginP2VPush(
+    fileIds: number[],
+    workflowId: number,
+    port?: number
+  ): Promise<{ sent: number; failed: number; error?: string }>
+
   // ===== 窗口装饰（自绘标题栏） =====
   /** 设置 Windows Controls Overlay 的配色。theme 派生标准色；color/symbolColor 可直接覆盖（详情页用精确背景色） */
   setTitleBarOverlay(opts: { visible?: boolean; theme?: 'light' | 'dark'; color?: string; symbolColor?: string }): Promise<void>
@@ -123,6 +131,7 @@ export const IPC = {
   UPDATE_CANVAS_ITEMS: 'serendip:updateCanvasItems',
   UPDATE_CANVAS_VIEWPORT: 'serendip:updateCanvasViewport',
   GET_FILE_CANVAS_IDS: 'serendip:getFileCanvasIds',
+  PLUGIN_P2V_PUSH: 'serendip:pluginP2VPush',
   SET_TITLE_BAR_OVERLAY: 'serendip:setTitleBarOverlay',
   FULLSCREEN_CHANGE: 'serendip:fullscreenChange',
   WINDOW_MOVE: 'serendip:windowMove'

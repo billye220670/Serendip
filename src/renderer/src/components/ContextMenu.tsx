@@ -72,12 +72,22 @@ export function ContextMenu({
 
   useEffect(() => {
     const onPointerDown = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      const target = e.target as Node
+      if (ref.current && ref.current.contains(target)) return
+      // 子面板（分类/画布/工作流选择器）是平级 portal，不在本菜单 DOM 树内，
+      // 但点击它们不应被本菜单的"外部点击"判定关闭 —— 靠共享标记跳过
+      if ((target as Element).closest?.('[data-menu-submenu]')) return
+      onClose()
     }
     const onKeyDown = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
-    const onScroll = (): void => onClose()
+    const onScroll = (e: Event): void => {
+      const target = e.target as Element | Document
+      // 子面板内部列表滚动不应关闭本菜单（同 onPointerDown 的排除逻辑）
+      if (target instanceof Element && target.closest?.('[data-menu-submenu]')) return
+      onClose()
+    }
     const onBlur = (): void => onClose()
     const onWindowMove = (): void => onClose()
 

@@ -115,6 +115,7 @@ export function CategoryPicker({
   return createPortal(
     <div
       ref={ref}
+      data-menu-submenu
       className="fixed z-[110] w-56 rounded-lg border border-border bg-background shadow-lg shadow-black/20 flex flex-col overflow-hidden"
       style={{ left: position.left, top: position.top }}
       onWheel={(e) => e.stopPropagation()}

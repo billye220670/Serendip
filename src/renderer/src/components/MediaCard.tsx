@@ -16,6 +16,8 @@ interface MediaCardProps {
   onContextMenu?: (e: React.MouseEvent, item: MediaItem) => void
   /** 缩略图加载失败时的回调（用于上报到主进程并从列表移除） */
   onThumbError?: (item: MediaItem) => void
+  /** 缩略图加载成功时上报自然宽高 —— 瀑布流据此纠正格子比例（绕开 DB 冷热） */
+  onThumbLoad?: (naturalWidth: number, naturalHeight: number) => void
   /** 启用拖拽 — 用于把媒体拖到侧栏分类。默认开启 */
   draggable?: boolean
   /** 多选点击（Ctrl/Shift/多选模式下的单击）。视图负责区间计算 */
@@ -96,6 +98,7 @@ function MediaCardImpl({
   onLikeToggle,
   onContextMenu,
   onThumbError,
+  onThumbLoad,
   draggable = true,
   onSelectClick,
   onLongPress,
@@ -445,6 +448,9 @@ function MediaCardImpl({
           loading="lazy"
           className="w-full h-full object-cover"
           onError={handleImgError}
+          onLoad={(e) =>
+            onThumbLoad?.(e.currentTarget.naturalWidth, e.currentTarget.naturalHeight)
+          }
         />
       ) : (
         <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">

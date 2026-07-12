@@ -38,11 +38,34 @@ interface GridHandlers {
 }
 
 const GridHandlersContext = createContext<GridHandlers | null>(null)
+// 本会话实测的宽高比缓存（id → height/width），跨虚拟化卸载/重挂复用，避免回滚二次抖动
+const RatioCacheContext = createContext<Map<number, number> | null>(null)
 
-/** 单元格：按列宽与原始宽高比算出高度，masonic 据此定位（首屏无跳动） */
+/**
+ * 单元格：按列宽与宽高比算出高度，masonic 据此定位。
+ * 比例优先级：本会话实测（缩略图自然尺寸）> DB 记录 > 兜底 3:4。
+ * 冷库（测试版首次扫描）DB 的 width/height 尚为 null，只有靠 onLoad 实测纠正，
+ * 否则所有图都退化成统一 3:4，看起来像等尺寸 grid 并把真图 crop 成 4:3。
+ * masonic 用 ResizeObserver 量每个 cell 的真实高度，故改 wrapper 高度后会自动重排这一格。
+ */
 function MasonryCard({ data, width }: RenderComponentProps<MediaItem>): React.JSX.Element {
   const h = useContext(GridHandlersContext)!
-  const ratio = (data.height || 3) / (data.width || 4)
+  const ratioCache = useContext(RatioCacheContext)!
+  const dbRatio = data.height && data.width ? data.height / data.width : null
+  // 初始值优先取缓存：滚走又滚回的重挂第一帧就用正确比例，和 positioner 缓存的位置一致 → 不抖
+  const [ratio, setRatio] = useState<number>(() => ratioCache.get(data.id) ?? dbRatio ?? 3 / 4)
+
+  const handleThumbLoad = useCallback(
+    (nw: number, nh: number) => {
+      if (!nw || !nh) return
+      const r = nh / nw
+      ratioCache.set(data.id, r)
+      // 仅在与当前值有可见差异时才更新，避免无谓重排（DB 比例已准的热库 / 重启后情形）
+      setRatio((prev) => (Math.abs(prev - r) > 0.005 ? r : prev))
+    },
+    [ratioCache, data.id]
+  )
+
   const height = Math.round(width * ratio)
   return (
     <div style={{ height }}>
@@ -51,6 +74,7 @@ function MasonryCard({ data, width }: RenderComponentProps<MediaItem>): React.JS
         onLikeToggle={h.onLikeToggle}
         onContextMenu={h.onContextMenu}
         onThumbError={h.onThumbError}
+        onThumbLoad={handleThumbLoad}
         onSelectClick={h.onSelectClick}
         onLongPress={h.onLongPress}
         onOpenDetail={h.onOpenDetail}
@@ -93,6 +117,9 @@ export function MasonryGrid({
   // 动画过程中不触发，避免每帧抖动。
   const containerRef = useRef<HTMLElement | null>(null)
   const scrollEl = useScrollContainer()
+  // 实测宽高比缓存：MasonryCard 在缩略图 onLoad 时写入，重挂时读取，避免二次抖动。
+  // 比例按 id 永久有效（图片宽高比不变），故跨 resetKey 保留纯收益，无需清理。
+  const ratioCacheRef = useRef<Map<number, number>>(new Map())
 
   const [containerWidth, setContainerWidth] = useState(() =>
     scrollEl?.clientWidth ?? window.innerWidth
@@ -176,7 +203,9 @@ export function MasonryGrid({
 
   return (
     <GridHandlersContext.Provider value={handlers}>
-      {masonry}
+      <RatioCacheContext.Provider value={ratioCacheRef.current}>
+        {masonry}
+      </RatioCacheContext.Provider>
     </GridHandlersContext.Provider>
   )
 }

@@ -5,7 +5,10 @@ import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { SelectionToolbar } from '../components/SelectionToolbar'
-import { pushCanvasToast } from '../components/Toast'
+import { pushCanvasToast, pushPluginToast } from '../components/Toast'
+import { useP2VMenu } from '../hooks/useP2VMenu'
+import { useP2VEnabled, useP2VPort } from '../stores/plugins'
+import { P2V_WORKFLOWS } from '../lib/p2vWorkflows'
 import { useCategoriesStore } from '../stores/categories'
 import { useCanvasesStore } from '../stores/canvases'
 import { useCurrentCanvasStore } from '../stores/currentCanvas'
@@ -43,6 +46,9 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const view = useLibraryStore((s) => s.view)
   const categoryRefreshNonce = useLibraryStore((s) => s.categoryRefreshNonce)
   const openDetail = useDetailStore((s) => s.open)
+  const p2vEnabled = useP2VEnabled()
+  const p2vPort = useP2VPort()
+  const { buildP2VItems, p2vPickerNode, closeP2VPicker } = useP2VMenu()
 
   const category = useMemo(
     () => categories.find((c) => c.id === categoryId),
@@ -140,7 +146,8 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
   const closeMenu = useCallback(() => {
     setMenu(null)
     setPicker(null)
-  }, [])
+    closeP2VPicker()
+  }, [closeP2VPicker])
 
   const performRemove = useCallback(
     async (item: MediaItem) => {
@@ -255,6 +262,7 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
 
   const menuItems: ContextMenuItem[] = menu
     ? [
+        ...buildP2VItems(menu.item),
         {
           key: 'like',
           label: menu.item.liked ? '取消喜欢' : '喜欢',
@@ -322,8 +330,10 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
       )}
 
       {menu && (
-        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} onSubmenuClose={() => setPicker(null)} />
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} onSubmenuClose={() => { setPicker(null); closeP2VPicker() }} />
       )}
+
+      {p2vPickerNode}
 
       {picker && (
         <CategoryPicker
@@ -384,6 +394,25 @@ export function CategoryView({ categoryId }: Props): React.JSX.Element {
         onAddToCanvas={handleBatchAddToCanvas}
         onCreateAndAddToCanvas={handleBatchCreateAndAddToCanvas}
         onRemoveFromCategory={() => setConfirmBatchRemove(true)}
+        {...(p2vEnabled
+          ? {
+              onP2VSend: (wf: number) => {
+                const ids = getSelectedIds()
+                if (!ids.length) return
+                deselectAll()
+                const name = P2V_WORKFLOWS.find((w) => w.id === wf)?.name
+                void window.api
+                  .pluginP2VPush(ids, wf, p2vPort)
+                  .then((r) =>
+                    pushPluginToast(r.error ? r.error : `已发送 ${r.sent} 张到 P2V · ${name}`)
+                  )
+                  .catch((err) => {
+                    console.error('pluginP2VPush failed:', err)
+                    pushPluginToast('发送到 P2V 失败，请稍后重试')
+                  })
+              }
+            }
+          : {})}
       />
 
       {confirmBatchRemove && (

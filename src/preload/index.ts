@@ -75,6 +75,9 @@ const api: SerendipAPI = {
   getFileCanvasIds: (fileId: number) =>
     ipcRenderer.invoke(IPC.GET_FILE_CANVAS_IDS, fileId),
 
+  pluginP2VPush: (fileIds: number[], workflowId: number, port?: number) =>
+    ipcRenderer.invoke(IPC.PLUGIN_P2V_PUSH, fileIds, workflowId, port),
+
   onScanProgress: (callback: (progress: ScanProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, progress: ScanProgress) => {
       callback(progress)

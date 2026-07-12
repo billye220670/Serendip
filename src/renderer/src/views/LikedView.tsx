@@ -4,10 +4,14 @@ import { MasonryGrid } from '../components/MasonryGrid'
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu'
 import { CategoryPicker } from '../components/CategoryPicker'
 import { SelectionToolbar } from '../components/SelectionToolbar'
+import { pushPluginToast } from '../components/Toast'
+import { useP2VMenu } from '../hooks/useP2VMenu'
 import { useCategoriesStore } from '../stores/categories'
 import { useLibraryStore } from '../stores/library'
 import { useGridSelection } from '../stores/selection'
 import { useDetailStore } from '../stores/detail'
+import { useP2VEnabled, useP2VPort } from '../stores/plugins'
+import { P2V_WORKFLOWS } from '../lib/p2vWorkflows'
 import type { MediaItem } from '../../../main/recommender'
 
 interface MenuState {
@@ -39,6 +43,9 @@ export function LikedView(): React.JSX.Element {
   const view = useLibraryStore((s) => s.view)
   const loadStats = useLibraryStore((s) => s.loadStats)
   const openDetail = useDetailStore((s) => s.open)
+  const p2vEnabled = useP2VEnabled()
+  const p2vPort = useP2VPort()
+  const { buildP2VItems, p2vPickerNode, closeP2VPicker } = useP2VMenu()
 
   const [items, setItems] = useState<MediaItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -166,7 +173,8 @@ export function LikedView(): React.JSX.Element {
   const closeMenu = useCallback(() => {
     setMenu(null)
     setPicker(null)
-  }, [])
+    closeP2VPicker()
+  }, [closeP2VPicker])
 
   // ===== 批量操作 =====
 
@@ -216,6 +224,7 @@ export function LikedView(): React.JSX.Element {
 
   const menuItems: ContextMenuItem[] = menu
     ? [
+        ...buildP2VItems(menu.item),
         {
           key: 'unlike',
           label: '取消喜欢',
@@ -282,8 +291,10 @@ export function LikedView(): React.JSX.Element {
       )}
 
       {menu && (
-        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} onSubmenuClose={() => setPicker(null)} />
+        <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} onSubmenuClose={() => { setPicker(null); closeP2VPicker() }} />
       )}
+
+      {p2vPickerNode}
 
       {picker && (
         <CategoryPicker
@@ -309,6 +320,25 @@ export function LikedView(): React.JSX.Element {
         onUnlike={handleBatchUnlike}
         onAddToCategory={handleBatchAddToCategory}
         onCreateAndAddToCategory={handleBatchCreateAndAddToCategory}
+        {...(p2vEnabled
+          ? {
+              onP2VSend: (wf: number) => {
+                const ids = getSelectedIds()
+                if (!ids.length) return
+                deselectAll()
+                const name = P2V_WORKFLOWS.find((w) => w.id === wf)?.name
+                void window.api
+                  .pluginP2VPush(ids, wf, p2vPort)
+                  .then((r) =>
+                    pushPluginToast(r.error ? r.error : `已发送 ${r.sent} 张到 P2V · ${name}`)
+                  )
+                  .catch((err) => {
+                    console.error('pluginP2VPush failed:', err)
+                    pushPluginToast('发送到 P2V 失败，请稍后重试')
+                  })
+              }
+            }
+          : {})}
       />
     </div>
   )

@@ -9,10 +9,12 @@ import {
   Square,
   CheckSquare,
   MinusSquare,
-  Presentation
+  Presentation,
+  Blocks
 } from 'lucide-react'
 import { CategoryPicker } from './CategoryPicker'
 import { CanvasPicker } from './CanvasPicker'
+import { WorkflowPicker } from './WorkflowPicker'
 import type { Category } from '../../../main/categories'
 import type { Canvas } from '../../../main/canvases'
 
@@ -34,6 +36,7 @@ interface SelectionToolbarProps {
   onAddToCanvas?: (canvasId: number) => void
   onCreateAndAddToCanvas?: (name: string) => void
   onRemoveFromCategory?: () => void
+  onP2VSend?: (workflowId: number) => void
 }
 
 export function SelectionToolbar({
@@ -53,10 +56,12 @@ export function SelectionToolbar({
   onCreateAndAddToCategory,
   onAddToCanvas,
   onCreateAndAddToCanvas,
-  onRemoveFromCategory
+  onRemoveFromCategory,
+  onP2VSend
 }: SelectionToolbarProps): React.JSX.Element | null {
   const [pickerAnchor, setPickerAnchor] = useState<{ x: number; y: number } | null>(null)
   const [canvasPickerAnchor, setCanvasPickerAnchor] = useState<{ x: number; y: number } | null>(null)
+  const [p2vPickerAnchor, setP2vPickerAnchor] = useState<{ x: number; y: number } | null>(null)
 
   if (!active) return null
 
@@ -82,6 +87,11 @@ export function SelectionToolbar({
     setCanvasPickerAnchor({ x: r.left + r.width / 2, y: r.top })
   }
 
+  const openP2VPicker = (e: React.MouseEvent): void => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setP2vPickerAnchor({ x: r.left + r.width / 2, y: r.top })
+  }
+
   const showAddToCanvas = !!onAddToCanvas
 
   return (
@@ -90,6 +100,14 @@ export function SelectionToolbar({
 
       <div className="w-px h-5 bg-border mx-0.5" />
 
+      {onP2VSend && (
+        <ToolbarButton
+          icon={Blocks}
+          label="P2V"
+          disabled={!hasSelection}
+          onClick={openP2VPicker}
+        />
+      )}
       {onSelectAllClick && (
         <ToolbarButton
           icon={selectAllIcon}
@@ -172,6 +190,15 @@ export function SelectionToolbar({
           onSelect={(id) => { onAddToCanvas?.(id); setCanvasPickerAnchor(null) }}
           onCreateAndSelect={(name) => { onCreateAndAddToCanvas?.(name); setCanvasPickerAnchor(null) }}
           onClose={() => setCanvasPickerAnchor(null)}
+        />
+      )}
+      {p2vPickerAnchor && (
+        <WorkflowPicker
+          x={p2vPickerAnchor.x}
+          y={p2vPickerAnchor.y}
+          placement="top"
+          onSelect={(wf) => { onP2VSend?.(wf); setP2vPickerAnchor(null) }}
+          onClose={() => setP2vPickerAnchor(null)}
         />
       )}
     </div>
