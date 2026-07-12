@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: plugins
+title: P2V Bridge 插件系统
+scope:
+    - src/main/plugins/
+    - src/renderer/src/stores/plugins.ts
+    - src/renderer/src/hooks/useP2VMenu.tsx
+    - src/renderer/src/components/WorkflowPicker.tsx
+    - src/renderer/src/lib/p2vWorkflows.ts
+source_files: []
+depends_on: []
+related_to: []

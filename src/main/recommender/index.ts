@@ -149,6 +149,33 @@ export function recommend(options: RecommendOptions): MediaItem[] {
 }
 
 /**
+ * 顺序浏览列表：返回 scopePath 下（含子目录，路径前缀匹配，与 recommend() 的 scope 语义一致）
+ * 按 path 升序排列的全部可用文件（不含 disliked / unavailable）。
+ * 供详情页「顺序浏览」模式使用 —— 与智能随机的抽样/冷却/shown_count 体系无关，纯目录序遍历。
+ */
+export function getSequenceList(scopePath?: string): MediaItem[] {
+  const db = getDatabase()
+
+  const rootRow = db.prepare('SELECT value FROM settings WHERE key = ?').get('rootPath') as
+    | { value: string }
+    | undefined
+  if (!rootRow) return []
+  const rootPath = rootRow.value
+
+  const effectiveScopePath =
+    scopePath && scopePath.startsWith(rootPath) ? scopePath : rootPath
+  const prefix = escapeLike(effectiveScopePath)
+
+  return db.prepare(`
+    SELECT id, path, folder_path, type, width, height, duration_ms, liked, disliked
+    FROM media_files
+    WHERE disliked = 0 AND unavailable = 0
+      AND path LIKE ? ESCAPE '\\'
+    ORDER BY path ASC
+  `).all(prefix + '%') as MediaItem[]
+}
+
+/**
  * 分层路径推荐：以当前路径为锚点，逐级向上层路径放宽采样
  * 权重策略：当前文件数越少，父链权重越高；最多 50% 给当前层
  */

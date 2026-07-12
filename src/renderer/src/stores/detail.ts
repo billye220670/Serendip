@@ -59,6 +59,38 @@ function relayForward(
   return { cells: result, placedIndex }
 }
 
+/**
+ * 接力后退：relayForward 的镜像版本，把 newItem 带入可见窗口的最左侧。
+ * 供顺序浏览模式在光标已在窗口最左（cursor===0）、仍要继续往回走时使用 ——
+ * 与 relayForward 对称：丢最右未锁定格，新图落入最左未锁定槽，锁定格原位不动。
+ */
+function relayBackward(
+  cells: Cell[],
+  newItem: MediaItem
+): { cells: Cell[]; placedIndex: number } | null {
+  if (cells.length < BUFFER_SIZE) {
+    const newCell = makeCell(newItem)
+    return { cells: [newCell, ...cells], placedIndex: 0 }
+  }
+  if (!cells.some((c) => !c.pinned)) return null
+  const newCell = makeCell(newItem)
+  const unlocked = cells.filter((c) => !c.pinned) // 视觉顺序
+  const queue = [newCell, ...unlocked.slice(0, unlocked.length - 1)] // 丢最右未锁定，新图入队首
+  const result: Cell[] = new Array(cells.length)
+  let qi = 0
+  let placedIndex = -1
+  for (let slot = 0; slot < cells.length; slot++) {
+    if (cells[slot].pinned) {
+      result[slot] = cells[slot]
+    } else {
+      result[slot] = queue[qi]
+      if (queue[qi] === newCell) placedIndex = slot
+      qi++
+    }
+  }
+  return { cells: result, placedIndex }
+}
+
 interface DetailState {
   isOpen: boolean
   /** 可见缩略图条，视觉左→右 = index 0..n-1，长度 ≤ BUFFER_SIZE。也是导航单元。 */
@@ -85,6 +117,15 @@ interface DetailState {
   /** 锁定/解锁某格（双击缩略图） */
   togglePin: (key: number) => void
   setScope: (path: string | null) => void
+  /**
+   * 顺序浏览模式专用：把 item 接力为新当前（复用 relayForward 的窗口滑动逻辑），
+   * 但不动 scopePath/scopeLocked/pool —— 与随机模式的抽样储备完全解耦，
+   * 关掉顺序模式后 next() 仍能无缝消费之前攒下的 pool。
+   * 全锁定无法落位时返回 false（与 relayTo 的 BLOCKED 语义一致）。
+   */
+  stepSequential: (item: MediaItem) => boolean
+  /** stepSequential 的反方向版本（relayBackward），窗口最左侧仍要继续往回走时用 */
+  stepSequentialBack: (item: MediaItem) => boolean
   _setFetching: (v: boolean) => void
 }
 
@@ -182,6 +223,22 @@ export const useDetailStore = create<DetailState>((set, get) => ({
   },
 
   _setFetching: (v) => set({ fetching: v }),
+
+  stepSequential: (item) => {
+    const state = get()
+    const res = relayForward(state.cells, item)
+    if (!res) return false
+    set({ cells: res.cells, cursor: res.placedIndex })
+    return true
+  },
+
+  stepSequentialBack: (item) => {
+    const state = get()
+    const res = relayBackward(state.cells, item)
+    if (!res) return false
+    set({ cells: res.cells, cursor: res.placedIndex })
+    return true
+  },
 }))
 
 /**

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useInView } from 'react-intersection-observer'
-import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Pause, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp, X, Video, Lock } from 'lucide-react'
+import { ChevronLeft, ImageOff, VideoOff, ChevronRight, PanelRightOpen, PanelRightClose, Play, Pause, Heart, HeartOff, Hash, MoreVertical, EyeOff, FolderOpen, Folder, Presentation, ChevronUp, X, Video, Lock, ListOrdered } from 'lucide-react'
 import clsx from 'clsx'
 import { clampScale, ZOOM_STEP } from '../lib/canvasMath'
 import { CURSOR_HAND_OPEN, CURSOR_HAND_GRAB } from '../lib/handCursor'
@@ -40,6 +40,8 @@ export function DetailView(): React.JSX.Element | null {
   const prev = useDetailStore((s) => s.prev)
   const jumpTo = useDetailStore((s) => s.jumpTo)
   const togglePin = useDetailStore((s) => s.togglePin)
+  const stepSequential = useDetailStore((s) => s.stepSequential)
+  const stepSequentialBack = useDetailStore((s) => s.stepSequentialBack)
   const cyclePinned = useLockSessionStore((s) => s.cyclePinned)
   const rootPath = useLibraryStore((s) => s.rootPath)
   const panelOpen = useUIStore((s) => s.detailPanelOpen)
@@ -259,6 +261,21 @@ export function DetailView(): React.JSX.Element | null {
     return undefined
   }, [isOpen])
 
+  // ===== 顺序浏览模式：点亮左下角按钮后，滚轮不再随机接力，而是按面包屑当前 scope
+  // （含子目录，与 scopePath 的抽样范围语义一致）下的路径顺序切图，首尾循环。
+  // 只拉取一次有序列表并按 scope 变化刷新；不写 shown_count/last_shown_at —— 与智能随机
+  // 的抽样权重体系无关，纯目录序遍历。 =====
+  const [sequentialOn, setSequentialOn] = useState(false)
+  const [seqList, setSeqList] = useState<MediaItem[]>([])
+  useEffect(() => {
+    if (!sequentialOn) return
+    let cancelled = false
+    void window.api.getSequenceList(scopePath ?? undefined).then((list) => {
+      if (!cancelled) setSeqList(list)
+    })
+    return () => { cancelled = true }
+  }, [sequentialOn, scopePath])
+
   // 滚轮翻图：时间冷却 + 单步。
   // 无极/高分辨率滚轮单个 wheel 事件的 deltaY 可达数百乃至上千；旧的「deltaY 累积过阈值」
   // 模型会在一个事件里 while 循环翻多张，暴力滚动 + 惯性动量事件叠加时造成高亮乱跳、
@@ -276,9 +293,37 @@ export function DetailView(): React.JSX.Element | null {
     const now = e.timeStamp
     if (now - lastFlipRef.current < WHEEL_COOLDOWN) return
     lastFlipRef.current = now
+    if (sequentialOn) {
+      // 顺序模式：有序列表未就绪时静默忽略本次滚动，不退回随机浏览
+      if (seqList.length === 0) return
+      if (e.deltaY > 0) {
+        // 前进：窗口内还有已接力过的下一格 → 直接移动光标（复用历史，不新开格，
+        // 与随机模式 next() 的窗口内前进语义一致）；到窗口前沿才真正接力新图
+        if (cursor < cells.length - 1) {
+          jumpTo(cursor + 1)
+        } else {
+          const currentId = cells[cursor]?.item.id
+          const idx = currentId != null ? seqList.findIndex((m) => m.id === currentId) : -1
+          const targetIdx = ((idx >= 0 ? idx : 0) + 1) % seqList.length
+          stepSequential(seqList[targetIdx])
+        }
+      } else {
+        // 回退：窗口内还有历史 → 直接移动光标回滚（原随机模式 prev() 的行为，
+        // 这是「无法回滚」问题的关键修复）；退到窗口最左端才向左接力新图
+        if (cursor > 0) {
+          jumpTo(cursor - 1)
+        } else {
+          const currentId = cells[cursor]?.item.id
+          const idx = currentId != null ? seqList.findIndex((m) => m.id === currentId) : -1
+          const targetIdx = ((idx >= 0 ? idx : 0) - 1 + seqList.length) % seqList.length
+          stepSequentialBack(seqList[targetIdx])
+        }
+      }
+      return
+    }
     if (e.deltaY > 0) next()
     else prev()
-  }, [next, prev, lockState])
+  }, [next, prev, lockState, sequentialOn, seqList, cells, cursor, jumpTo, stepSequential, stepSequentialBack])
 
   // 键盘：Esc / ←→ / 空格 / Tab。
   // 用左右而非上下，与底部缩略图导航的左右排布心智对齐（→ 下一张，← 上一张）
@@ -432,58 +477,79 @@ export function DetailView(): React.JSX.Element | null {
           <ThumbStrip cells={cells} cursor={cursor} jumpTo={jumpTo} togglePin={togglePin} />
         )}
 
-        {/* 底部左侧操作区：喜欢(f) + 分隔线 + 分类入口(h)，不与缩略图条争位 */}
+        {/* 底部左侧操作区：顺序浏览开关 + 喜欢(f) + 分隔线 + 分类入口(h)，不与缩略图条争位。
+            flex-col-reverse：第一个子元素（原有一行）贴底，第二个子元素（顺序浏览开关）自然叠在其上方 */}
         {lockState === 'off' && (
-          <div className="absolute bottom-5 left-4 z-20 flex items-center gap-2">
-            {/* f：喜欢 */}
-            <button
-              onClick={() => { void handleLikeToggle() }}
-              aria-label={itemLiked ? '取消喜欢' : '喜欢'}
-              className={clsx(
-                'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
-                itemLiked
-                  ? 'bg-pink-500/90 text-white hover:bg-pink-400/90'
-                  : isLight
-                    ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
-                    : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
-              )}
-            >
-              <Heart className={clsx('w-5 h-5', itemLiked && 'fill-current')} />
-            </button>
+          <div className="absolute bottom-5 left-4 z-20 flex flex-col-reverse items-start gap-2">
+            <div className="flex items-center gap-2">
+              {/* f：喜欢 */}
+              <button
+                onClick={() => { void handleLikeToggle() }}
+                aria-label={itemLiked ? '取消喜欢' : '喜欢'}
+                className={clsx(
+                  'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
+                  itemLiked
+                    ? 'bg-pink-500/90 text-white hover:bg-pink-400/90'
+                    : isLight
+                      ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
+                      : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                )}
+              >
+                <Heart className={clsx('w-5 h-5', itemLiked && 'fill-current')} />
+              </button>
 
-            <div className={isLight ? 'w-px h-6 bg-foreground/15' : 'w-px h-6 bg-white/25'} />
+              <div className={isLight ? 'w-px h-6 bg-foreground/15' : 'w-px h-6 bg-white/25'} />
 
-            {/* h：# 按钮，relative 用于面板锚定 */}
-            <div className="relative">
-              <Tooltip text="管理分类" side="top">
-                <button
-                  onClick={() => setSearchOpen((v) => !v)}
-                  aria-label="管理分类"
-                  className={clsx(
-                    'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
-                    searchOpen
-                      ? 'bg-primary text-white'
-                      : isLight
-                        ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
-                        : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
-                  )}
-                >
-                  <Hash className="w-5 h-5" />
-                </button>
-              </Tooltip>
+              {/* h：# 按钮，relative 用于面板锚定 */}
+              <div className="relative">
+                <Tooltip text="管理分类" side="top">
+                  <button
+                    onClick={() => setSearchOpen((v) => !v)}
+                    aria-label="管理分类"
+                    className={clsx(
+                      'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
+                      searchOpen
+                        ? 'bg-primary text-white'
+                        : isLight
+                          ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
+                          : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                    )}
+                  >
+                    <Hash className="w-5 h-5" />
+                  </button>
+                </Tooltip>
 
-              {/* 分类搜索面板：absolute bottom-full，锚定在 # 按钮上方 */}
-              {searchOpen && (
-                <CategorySearchPanel
-                  fileId={currentItem.id}
-                  categories={categories}
-                  memberIds={itemCategoryIds}
-                  onToggle={handleCategoryToggle}
-                  onCreate={handleCategoryCreate}
-                  onClose={() => setSearchOpen(false)}
-                />
-              )}
+                {/* 分类搜索面板：absolute bottom-full，锚定在 # 按钮上方 */}
+                {searchOpen && (
+                  <CategorySearchPanel
+                    fileId={currentItem.id}
+                    categories={categories}
+                    memberIds={itemCategoryIds}
+                    onToggle={handleCategoryToggle}
+                    onCreate={handleCategoryCreate}
+                    onClose={() => setSearchOpen(false)}
+                  />
+                )}
+              </div>
             </div>
+
+            {/* 顺序浏览开关：点亮后滚轮按当前面包屑目录顺序切图（首尾循环），高亮用主题色 */}
+            <Tooltip text={sequentialOn ? '关闭顺序浏览（恢复随机滚轮）' : '开启顺序浏览（滚轮按目录顺序切图）'} side="top">
+              <button
+                onClick={() => setSequentialOn((v) => !v)}
+                aria-label={sequentialOn ? '关闭顺序浏览' : '开启顺序浏览'}
+                className={clsx(
+                  'grid place-items-center p-3 rounded-full transition-colors focus:outline-none backdrop-blur-sm',
+                  sequentialOn
+                    ? 'bg-primary text-white hover:bg-primary/90'
+                    : isLight
+                      ? 'bg-white/70 text-gray-900/60 hover:bg-white/85 hover:text-gray-900'
+                      : 'bg-black/45 text-white/70 hover:bg-black/65 hover:text-white'
+                )}
+              >
+                <ListOrdered className="w-5 h-5" />
+              </button>
+            </Tooltip>
           </div>
         )}
 

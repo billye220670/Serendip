@@ -1,0 +1,153 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: stage7-watch
+nodes_managed: true
+exported_at: "2026-07-12T08:37:06Z"
+modules:
+    "":
+        dir_name: Serendip 桌面相册应用（Electron + Vite + React）
+        title: Serendip 桌面相册应用（Electron + Vite + React）
+        scope:
+            - README.md
+            - CLAUDE.md
+            - .editorconfig
+            - .gitignore
+            - .npmrc
+            - .prettierignore
+            - .prettierrc.yaml
+            - electron-builder.yml
+            - electron.vite.config.ts
+            - eslint.config.mjs
+            - package.json
+            - package-lock.json
+            - postcss.config.js
+            - tailwind.config.js
+            - tsconfig.json
+            - tsconfig.node.json
+            - tsconfig.web.json
+            - .claude\settings.local.json
+            - .vscode\extensions.json
+            - .vscode\launch.json
+            - .vscode\settings.json
+            - docs\CanvasPlan\main.md
+            - docs\CanvasPlan\stage1-completed.md
+            - docs\CanvasPlan\stage2-completed.md
+            - docs\CanvasPlan\stage3-completed.md
+            - docs\CanvasPlan\stage4-completed.md
+            - docs\CanvasPlan\stage5-completed.md
+            - docs\CanvasPlan\stage6.md
+            - docs\CanvasPlan\stage7.md
+            - docs\canvas-dev-plan.md
+            - docs\canvas-placement-algorithm.md
+            - docs\detail-lock-mode-dev-plan.md
+            - docs\detail-thumb-pin-plan.md
+            - docs\detail-view-dev-plan.md
+            - docs\stage6-review-design.md
+            - docs\stage7-watch-design.md
+            - docs\stage8-canvas-design.md
+            - docs\ui-optimization.md
+            - docs\原型参考(和文档对应).png
+            - docs\原始需求文档.txt
+            - resources\icon.png
+            - src\main\canvases\index.ts
+            - src\main\categories\index.ts
+            - src\main\db\index.ts
+            - src\main\index.ts
+            - src\main\ipc\contract.ts
+            - src\main\ipc\handlers.ts
+            - src\main\media-types.ts
+            - src\main\recommender\index.ts
+            - src\main\scanner\index.ts
+            - src\main\thumbnailer\index.ts
+            - src\main\thumbnailer\protocol.ts
+            - src\main\watcher\index.ts
+            - src\preload\index.d.ts
+            - src\preload\index.ts
+            - src\renderer\index.html
+            - src\renderer\src\App.tsx
+            - src\renderer\src\assets\main.css
+            - src\renderer\src\components\CanvasList.tsx
+            - src\renderer\src\components\CanvasPicker.tsx
+            - src\renderer\src\components\CategoryList.tsx
+            - src\renderer\src\components\CategoryPicker.tsx
+            - src\renderer\src\components\CategorySearchPanel.tsx
+            - src\renderer\src\components\ConfirmDialog.tsx
+            - src\renderer\src\components\ContextMenu.tsx
+            - src\renderer\src\components\CurrentCanvasChip.tsx
+            - src\renderer\src\components\DragPreview.tsx
+            - src\renderer\src\components\MasonryGrid.tsx
+            - src\renderer\src\components\MediaCard.tsx
+            - src\renderer\src\components\PromptDialog.tsx
+            - src\renderer\src\components\SelectionToolbar.tsx
+            - src\renderer\src\components\Toast.tsx
+            - src\renderer\src\components\Tooltip.tsx
+            - src\renderer\src\env.d.ts
+            - src\renderer\src\hooks\useCameraShake.ts
+            - src\renderer\src\lib\cameraShake.ts
+            - src\renderer\src\lib\canvasMath.ts
+            - src\renderer\src\lib\canvasNavigate.ts
+            - src\renderer\src\lib\clipPolygon.ts
+            - src\renderer\src\lib\dragRegion.ts
+            - src\renderer\src\lib\grid.ts
+            - src\renderer\src\lib\handCursor.ts
+            - src\renderer\src\lib\scrollContainer.tsx
+            - src\renderer\src\lib\valueNoise.ts
+            - src\renderer\src\main.tsx
+            - src\renderer\src\stores\cameraShake.ts
+            - src\renderer\src\stores\canvasClipboard.ts
+            - src\renderer\src\stores\canvasItems.ts
+            - src\renderer\src\stores\canvasSelection.ts
+            - src\renderer\src\stores\canvasUndo.ts
+            - src\renderer\src\stores\canvasViewport.ts
+            - src\renderer\src\stores\canvases.ts
+            - src\renderer\src\stores\categories.ts
+            - src\renderer\src\stores\currentCanvas.ts
+            - src\renderer\src\stores\detail.ts
+            - src\renderer\src\stores\library.ts
+            - src\renderer\src\stores\lockSession.ts
+            - src\renderer\src\stores\panelRecommendations.ts
+            - src\renderer\src\stores\selection.ts
+            - src\renderer\src\stores\ui.ts
+            - src\renderer\src\views\CanvasView.tsx
+            - src\renderer\src\views\CategoryView.tsx
+            - src\renderer\src\views\Detail.tsx
+            - src\renderer\src\views\Explore.tsx
+            - src\renderer\src\views\LikedView.tsx
+            - src\renderer\src\views\Review.tsx
+            - src\renderer\src\views\canvas\CameraShakeControls.tsx
+            - src\renderer\src\views\canvas\CameraShakePanel.tsx
+            - src\renderer\src\views\canvas\CanvasItemNode.tsx
+            - src\renderer\src\views\canvas\CanvasToolbar.tsx
+            - src\renderer\src\views\canvas\CanvasVideoNode.tsx
+            - src\renderer\src\views\canvas\CanvasView.tsx
+            - src\renderer\src\views\canvas\CornerRotateOverlay.tsx
+            - tsconfig.web.tsbuildinfo
+        source_files: []
+        children:
+            - docs
+            - plugins
+        depends_on: []
+        related_to: []
+    docs:
+        dir_name: 产品需求与开发计划文档集
+        title: 产品需求与开发计划文档集
+        scope:
+            - docs/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    plugins:
+        dir_name: P2V Bridge 插件系统
+        title: P2V Bridge 插件系统
+        scope:
+            - src/main/plugins/
+            - src/renderer/src/stores/plugins.ts
+            - src/renderer/src/hooks/useP2VMenu.tsx
+            - src/renderer/src/components/WorkflowPicker.tsx
+            - src/renderer/src/lib/p2vWorkflows.ts
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []

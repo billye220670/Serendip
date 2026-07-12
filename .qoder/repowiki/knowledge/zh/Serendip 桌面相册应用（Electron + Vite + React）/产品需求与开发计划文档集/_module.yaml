@@ -1,0 +1,8 @@
+schema_version: 1
+module_path: docs
+title: 产品需求与开发计划文档集
+scope:
+    - docs/
+source_files: []
+depends_on: []
+related_to: []

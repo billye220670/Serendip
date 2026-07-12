@@ -20,6 +20,8 @@ export interface SerendipAPI {
   // ===== 推荐与浏览 =====
   getRecommendations(count: number, mode: ExploreMode, onlyUnrated?: boolean, scopePath?: string): Promise<MediaItem[]>
   getHierarchicalRecommendations(folderPath: string, rootPath: string, count: number, mode: ExploreMode): Promise<MediaItem[]>
+  /** 顺序浏览列表（详情页顺序模式）：scopePath 下（含子目录）按 path 升序排列的可用文件，不传则用 rootPath */
+  getSequenceList(scopePath?: string): Promise<MediaItem[]>
   setLiked(fileId: number, liked: boolean): Promise<void>
   setDisliked(fileId: number, disliked: boolean): Promise<void>
   /** 批量设置喜欢（多选模式） */
@@ -98,6 +100,7 @@ export const IPC = {
   SCAN_PROGRESS: 'serendip:scanProgress',
   GET_RECOMMENDATIONS: 'serendip:getRecommendations',
   GET_HIERARCHICAL_RECOMMENDATIONS: 'serendip:getHierarchicalRecommendations',
+  GET_SEQUENCE_LIST: 'serendip:getSequenceList',
   SET_LIKED: 'serendip:setLiked',
   SET_DISLIKED: 'serendip:setDisliked',
   SET_LIKED_BATCH: 'serendip:setLikedBatch',
